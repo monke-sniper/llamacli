@@ -217,10 +217,13 @@ class TestMainMenu:
         assert "chat_trained" in values
         assert "quick_chat" in values
         assert "download_model" in values
+        assert "download_dataset" in values
         assert "export" in values
         assert "view_models" in values
         assert "view_datasets" in values
         assert "add_dataset" in values
+        assert "workspace_info" in values
+        assert "system_check" in values
         assert "exit" in values
 
     def test_menu_choices_unique(self):
@@ -235,6 +238,36 @@ class TestHfDownload:
         assert callable(search_models)
         assert callable(download_model)
         assert callable(download_model_interactive)
+
+    def test_dataset_download_imports(self):
+        from llamacli.hf import search_datasets, download_dataset, download_dataset_interactive
+        assert callable(search_datasets)
+        assert callable(download_dataset)
+        assert callable(download_dataset_interactive)
+
+    def test_rich_tqdm_exists(self):
+        from llamacli.hf import RichTqdm
+        assert hasattr(RichTqdm, "format_bar")
+        assert hasattr(RichTqdm, "format_size")
+        assert hasattr(RichTqdm, "format_speed")
+        assert hasattr(RichTqdm, "format_eta")
+
+    def test_format_size(self):
+        from llamacli.hf import RichTqdm
+        assert "B" in RichTqdm.format_size(100)
+        assert "KB" in RichTqdm.format_size(2048)
+        assert "MB" in RichTqdm.format_size(2 * 1024 * 1024)
+        assert "GB" in RichTqdm.format_size(2 * 1024 * 1024 * 1024)
+
+    def test_format_speed(self):
+        from llamacli.hf import RichTqdm
+        speed = RichTqdm.format_speed(1024 * 1024 * 5)
+        assert "MB/s" in speed
+
+    def test_format_eta(self):
+        from llamacli.hf import RichTqdm
+        assert "min" in RichTqdm.format_eta(120) or "s" in RichTqdm.format_eta(120)
+        assert "s" in RichTqdm.format_eta(30)
 
     def test_hf_availability_check(self):
         from llamacli.hf import _check_hf, _HF_AVAILABLE

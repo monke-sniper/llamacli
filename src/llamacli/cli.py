@@ -11,7 +11,8 @@ from rich.console import Console
 from rich.table import Table
 
 from . import CONFIGS_DIR, MODELS_DIR, SAVES_DIR
-from .hf import download_model_interactive
+from .hf import download_model_interactive, download_dataset_interactive
+from .bootstrap import run_bootstrap
 from .logo import print_logo
 from .prompts import (
     _count_dataset,
@@ -41,10 +42,13 @@ MAIN_MENU = [
     questionary.Choice(title="  Chat Trained Model", value="chat_trained"),
     questionary.Choice(title="  Quick Chat", value="quick_chat"),
     questionary.Choice(title="  Download Model", value="download_model"),
+    questionary.Choice(title="  Download Dataset", value="download_dataset"),
     questionary.Choice(title="  Export Adapter", value="export"),
     questionary.Choice(title="  View Models", value="view_models"),
     questionary.Choice(title="  View Datasets", value="view_datasets"),
     questionary.Choice(title="  Add Dataset", value="add_dataset"),
+    questionary.Choice(title="  Workspace Info", value="workspace_info"),
+    questionary.Choice(title="  System Check", value="system_check"),
     questionary.Choice(title="  Exit", value="exit"),
 ]
 
@@ -118,7 +122,8 @@ def _record_training(output_name, model, dataset, stage, epochs, template):
     state.active_model = model
     state.active_dataset = dataset.split(",")[0].strip() if dataset else ""
     state.active_template = template
-    state.training_history.append({
+    state.active_adapter = os.path.join("saves", output_name, "lora")
+    record = {
         "name": output_name,
         "model": model,
         "adapter": os.path.join("saves", output_name, "lora"),
@@ -128,8 +133,16 @@ def _record_training(output_name, model, dataset, stage, epochs, template):
         "epochs": epochs,
         "config": os.path.join("configs", f"llamacli_{output_name}.yaml"),
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-    })
+    }
+    state.training_history.append(record)
     state.save()
+
+    summary_path = os.path.join(CONFIGS_DIR, f"llamacli_{output_name}_summary.yaml")
+    try:
+        with open(summary_path, "w", encoding="utf-8") as f:
+            yaml.dump(record, f, default_flow_style=False, allow_unicode=True)
+    except OSError:
+        pass
 
 
 def _write_config_and_train(console, config, output_name):
@@ -535,6 +548,101 @@ def export_screen(console):
     run_export(console, config_path)
 
 
+def workspace_info_screen(console):
+    from . import PROJECT_ROOT, DATA_DIR, SAVES_DIR, MODELS_DIR, CONFIGS_DIR
+    console.print("\n[bold white]Workspace Info[/bold white]\n")
+    console.print(f"[bold]Project root:[/] [dim]{PROJECT_ROOT}[/]")
+    console.print(f"[bold]Data dir:[/]    [dim]{DATA_DIR}[/]")
+    console.print(f"[bold]Saves dir:[/]   [dim]{SAVES_DIR}[/]")
+    console.print(f"[bold]Models dir:[/] [dim]{MODELS_DIR}[/]")
+    console.print(f"[bold]Configs dir:[/] [dim]{CONFIGS_DIR}[/]")
+
+    table = Table(show_header=True, header_style="bold white", border_style="white")
+    table.add_column("Directory", style="white")
+    table.add_column("Items", style="dim", width=8)
+    table.add_column("Size", style="dim", width=12)
+
+    for label, path in [
+        ("data/", DATA_DIR),
+        ("saves/", SAVES_DIR),
+        ("models/", MODELS_DIR),
+        ("configs/", CONFIGS_DIR),
+    ]:
+        count = 0
+        size = 0
+        if os.path.isdir(path):
+            for root, dirs, files in os.walk(path):
+                for f in files:
+                    fp = os.path.join(root, f)
+                    count += 1
+                    try:
+                        size += os.path.getsize(fp)
+                    except OSError:
+                        pass
+        size_str = f"{size / (1024**3):.2f} GB" if size >= 1024**3 else f"{size / (1024**2):.1f} MB" if size >= 1024**2 else f"{size} B"
+        table.add_row(label, str(count), size_str)
+    console.print(table)
+
+
+def system_check_screen(console):
+    import shutil
+    import sys as _sys
+
+    console.print("\n[bold white]System Check[/bold white]\n")
+
+    table = Table(show_header=True, header_style="bold white", border_style="white")
+    table.add_column("Check", style="white")
+    table.add_column("Status", style="dim", width=12)
+    table.add_column("Details", style="dim")
+
+    py_ok = _sys.version_info >= (3, 11)
+    table.add_row(
+        "Python >= 3.11",
+        "[green]OK[/]" if py_ok else "[red]FAIL[/]",
+        f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}",
+    )
+
+    lf_cli = shutil.which("llamafactory-cli")
+    table.add_row(
+        "LLaMA-Factory",
+        "[green]OK[/]" if lf_cli else "[yellow]MISSING[/]",
+        lf_cli or "pip install llamafactory",
+    )
+
+    hf_cli = shutil.which("huggingface-cli")
+    table.add_row(
+        "HuggingFace CLI",
+        "[green]OK[/]" if hf_cli else "[yellow]MISSING[/]",
+        hf_cli or "pip install huggingface-hub",
+    )
+
+    try:
+        import torch
+        gpu_ok = torch.cuda.is_available() or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+        gpu_name = ""
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            gpu_name = "Apple MPS"
+        table.add_row(
+            "GPU (CUDA/MPS)",
+            "[green]OK[/]" if gpu_ok else "[yellow]CPU ONLY[/]",
+            gpu_name or "No GPU detected",
+        )
+    except ImportError:
+        table.add_row("GPU (CUDA/MPS)", "[yellow]UNKNOWN[/]", "torch not installed")
+
+    from . import DATA_DIR, SAVES_DIR, MODELS_DIR, CONFIGS_DIR
+    for name, d in [("data/", DATA_DIR), ("saves/", SAVES_DIR), ("models/", MODELS_DIR), ("configs/", CONFIGS_DIR)]:
+        exists = os.path.isdir(d)
+        if not exists:
+            os.makedirs(d, exist_ok=True)
+            exists = True
+        table.add_row(name, "[green]OK[/]" if exists else "[red]FAIL[/]", d)
+
+    console.print(table)
+
+
 def _ensure_directories():
     from . import CONFIGS_DIR, DATA_DIR, MODELS_DIR, SAVES_DIR, DATASET_INFO
 
@@ -591,6 +699,9 @@ def interactive_loop():
             elif choice == "download_model":
                 download_model_interactive(console)
                 console.input("\n[dim]Press Enter to return to menu...[/]")
+            elif choice == "download_dataset":
+                download_dataset_interactive(console)
+                console.input("\n[dim]Press Enter to return to menu...[/]")
             elif choice == "export":
                 export_screen(console)
                 console.input("\n[dim]Press Enter to return to menu...[/]")
@@ -602,6 +713,12 @@ def interactive_loop():
                 console.input("\n[dim]Press Enter to return to menu...[/]")
             elif choice == "add_dataset":
                 add_dataset_screen(console)
+                console.input("\n[dim]Press Enter to return to menu...[/]")
+            elif choice == "workspace_info":
+                workspace_info_screen(console)
+                console.input("\n[dim]Press Enter to return to menu...[/]")
+            elif choice == "system_check":
+                system_check_screen(console)
                 console.input("\n[dim]Press Enter to return to menu...[/]")
 
         except KeyboardInterrupt:
@@ -627,7 +744,24 @@ def main(
         console.print(f"[white]llamacli[/] [bold]{PROJECT_ROOT}[/]")
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
+        _check_first_run(console)
         interactive_loop()
+
+
+def _check_first_run(console):
+    from . import PROJECT_ROOT
+    marker = os.path.join(PROJECT_ROOT, ".llamacli.yaml")
+    if not os.path.isfile(marker):
+        console.print("\n[bold cyan]Welcome to llamacli![/bold cyan]")
+        console.print("[dim]Let's check your system before we start.[/]\n")
+        run_bootstrap(console)
+        console.print()
+
+
+@app.command()
+def setup():
+    """Run system check and install missing dependencies."""
+    run_bootstrap(console)
 
 
 @app.command()

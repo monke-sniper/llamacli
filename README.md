@@ -45,7 +45,7 @@ An interactive terminal app for fine-tuning large language models. Pick a model,
 pip install llamacli
 ```
 
-Requires Python 3.11+ and a GPU (CUDA or MPS).
+Requires Python 3.11+ and a GPU (CUDA or MPS). No additional setup needed - llamacli auto-detects and installs missing dependencies on first run.
 
 ## Quick Start
 
@@ -65,17 +65,22 @@ Then follow the menu:
  3.  Chat Trained Model →  instantly chat your last fine-tune
  4.  Quick Chat         →  chat with any cached model
  5.  Download Model     →  search & download from HuggingFace
- 6.  Export Adapter     →  merge LoRA into standalone model
- 7.  View Models        →  browse your cached models
- 8.  View Datasets      →  browse available datasets
- 9.  Add Dataset        →  register a new dataset
+ 6.  Download Dataset   →  search & download from HuggingFace
+ 7.  Export Adapter     →  merge LoRA into standalone model
+ 8.  View Models        →  browse your cached models
+ 9.  View Datasets      →  browse available datasets
+10.  Add Dataset        →  register a new dataset
+11.  Workspace Info     →  show workspace location & status
+12.  System Check       →  verify setup & dependencies
+13.  Exit
 ```
 
 ## Features
 
 | Feature | Description |
 |---|---|
-| **Model Download** | Search and download any HuggingFace text-generation model |
+| **Model Download** | Search and download any HuggingFace text-generation model with progress bar and ETA |
+| **Dataset Download** | Search and download datasets from HuggingFace with auto-format-detection |
 | **Auto-Discover Datasets** | Drop `.json` files in `data/` — alpaca & sharegpt formats detected automatically |
 | **Quick Train** | Fine-tune in 3 prompts: pick model → pick dataset → set epochs → train |
 | **Smart Defaults** | LoRA rank=8, LR=1e-4, batch=2, cutoff=512, SFT — tuned for low-VRAM setups |
@@ -83,20 +88,28 @@ Then follow the menu:
 | **Chat Trained Model** | Instantly loads your most recent training run — no selection needed |
 | **Quick Chat** | Chat with any model ± adapter with streaming token output |
 | **Export** | Merge LoRA adapters into standalone models for inference |
+| **Centralized Workspace** | All files in `~/.llamaworkspace/` — configurable via `workspace.yaml` or env var |
+| **Zero-Setup Bootstrap** | Auto-detects and installs missing dependencies on first run |
+| **System Check** | Verify Python, LLaMA-Factory, GPU, and workspace setup |
+| **Training Summaries** | Each training run produces a modular YAML summary in `configs/` |
 
 ## Project Layout
 
-llamacli creates a workspace wherever you run it:
+llamacli uses a centralized workspace at `~/.llamaworkspace/` by default. You can change this via `workspace.yaml` or the `LLAMACLII_WORKSPACE` environment variable.
 
 ```
-my-project/
+~/.llamaworkspace/
+├── GUIDE.md            # full documentation & configuration guide
+├── workspace.yaml      # workspace configuration
 ├── .llamacli.yaml      # per-project state
 ├── data/               # datasets — auto-discovered
 │   ├── dataset_info.json
 │   └── README.txt       # format guide
 ├── saves/              # LoRA adapters + checkpoints
 ├── models/             # exported / merged models
-└── configs/            # auto-generated YAML
+└── configs/            # auto-generated YAML from training runs
+    ├── llamacli_run_*.yaml         # training config
+    └── llamacli_run_*_summary.yaml # training summary
 ```
 
 ## Dataset Formats
@@ -129,6 +142,8 @@ Drop files in `data/` and they appear in the dropdown automatically.
 llamacli              # interactive menu
 llamacli --version    # show version
 llamacli --help       # show help
+llamacli setup        # run system check & install dependencies
+llamacli train ...     # direct training (see below)
 ```
 
 ### Direct training

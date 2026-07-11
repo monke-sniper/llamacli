@@ -1,3 +1,4 @@
+import functools
 import json
 import os
 import glob
@@ -7,6 +8,16 @@ from rich.console import Console
 
 from . import DATA_DIR, DATASET_INFO, HF_CACHE, MODELS_DIR, SAVES_DIR
 from .state import get_state
+
+
+@functools.lru_cache(maxsize=1)
+def _list_cached_models_cached():
+    return _list_cached_models_impl()
+
+
+def _list_cached_models():
+    _list_cached_models_cached.cache_clear()
+    return _list_cached_models_cached()
 
 
 STAGES = [
@@ -65,7 +76,7 @@ MODEL_TYPE_TO_TEMPLATE = {
 }
 
 
-def _list_cached_models():
+def _list_cached_models_impl():
     models = []
     if not os.path.isdir(HF_CACHE):
         return models
@@ -169,21 +180,44 @@ def detect_template(repo_id):
     return "qwen3"
 
 
+def _detect_format(data):
+    """Detect dataset format from data content."""
+    if not isinstance(data, list) or len(data) == 0:
+        return None
+    first = data[0]
+    if not isinstance(first, dict):
+        return None
+    if "instruction" in first and "output" in first:
+        return "alpaca"
+    if "messages" in first:
+        return "sharegpt"
+    if "conversations" in first:
+        return "sharegpt"
+    if "prompt" in first and "completion" in first:
+        return "alpaca"
+    if "text" in first:
+        return "alpaca"
+    return None
+
+
 def _list_datasets():
     datasets = {}
     os.makedirs(DATA_DIR, exist_ok=True)
     if os.path.isfile(DATASET_INFO):
-        with open(DATASET_INFO, "r", encoding="utf-8") as f:
-            registry = json.load(f)
-        for name, info in registry.items():
-            datasets[name] = {
-                "name": name,
-                "format": info.get("formatting", "alpaca"),
-                "source": "registered",
-            }
+        try:
+            with open(DATASET_INFO, "r", encoding="utf-8") as f:
+                registry = json.load(f)
+            for name, info in registry.items():
+                datasets[name] = {
+                    "name": name,
+                    "format": info.get("formatting", "alpaca"),
+                    "source": "registered",
+                }
+        except (json.JSONDecodeError, OSError):
+            pass
 
     for fname in sorted(os.listdir(DATA_DIR)):
-        if fname.startswith(".") or fname == "dataset_info.json":
+        if fname.startswith(".") or fname == "dataset_info.json" or fname == "README.txt":
             continue
         fpath = os.path.join(DATA_DIR, fname)
         if not os.path.isfile(fpath):
@@ -193,43 +227,37 @@ def _list_datasets():
             continue
         if fname.endswith(".json"):
             try:
-                with open(fpath, "r", encoding="utf-8") as f:
+                with open(fpath, "r", encoding="utf-8-sig") as f:
                     data = json.load(f)
-                if isinstance(data, list) and len(data) > 0:
-                    first = data[0]
-                    if "instruction" in first and "output" in first:
-                        datasets[name] = {
-                            "name": name,
-                            "format": "alpaca",
-                            "source": "auto",
-                        }
-                    elif "messages" in first:
-                        datasets[name] = {
-                            "name": name,
-                            "format": "sharegpt",
-                            "source": "auto",
-                        }
-            except Exception:
+                fmt = _detect_format(data)
+                if fmt:
+                    datasets[name] = {
+                        "name": name,
+                        "format": fmt,
+                        "source": "auto",
+                    }
+            except (json.JSONDecodeError, OSError):
                 pass
         elif fname.endswith(".jsonl"):
             try:
-                with open(fpath, "r", encoding="utf-8") as f:
+                with open(fpath, "r", encoding="utf-8-sig") as f:
                     first_line = f.readline().strip()
                 if first_line:
                     first = json.loads(first_line)
-                    if "instruction" in first and "output" in first:
-                        datasets[name] = {
-                            "name": name,
-                            "format": "alpaca",
-                            "source": "auto",
-                        }
-                    elif "messages" in first:
-                        datasets[name] = {
-                            "name": name,
-                            "format": "sharegpt",
-                            "source": "auto",
-                        }
-            except Exception:
+                    if isinstance(first, dict):
+                        if "instruction" in first and "output" in first:
+                            datasets[name] = {
+                                "name": name,
+                                "format": "alpaca",
+                                "source": "auto",
+                            }
+                        elif "messages" in first or "conversations" in first:
+                            datasets[name] = {
+                                "name": name,
+                                "format": "sharegpt",
+                                "source": "auto",
+                            }
+            except (json.JSONDecodeError, OSError):
                 pass
 
     return [v for _, v in sorted(datasets.items())]

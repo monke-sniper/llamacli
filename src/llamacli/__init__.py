@@ -1,16 +1,15 @@
 ﻿import os
 
+from .workspace import init_workspace
 
-def _get_project_root():
-    return os.getcwd()
+_workspace_path, _dirs = init_workspace()
 
-
-PROJECT_ROOT = _get_project_root()
+PROJECT_ROOT = _workspace_path
 STATE_PATH = os.path.join(PROJECT_ROOT, ".llamacli.yaml")
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-SAVES_DIR = os.path.join(PROJECT_ROOT, "saves")
-MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
-CONFIGS_DIR = os.path.join(PROJECT_ROOT, "configs")
+DATA_DIR = _dirs["data"]
+SAVES_DIR = _dirs["saves"]
+MODELS_DIR = _dirs["models"]
+CONFIGS_DIR = _dirs["configs"]
 DATASET_INFO = os.path.join(DATA_DIR, "dataset_info.json")
 HF_CACHE = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
 
