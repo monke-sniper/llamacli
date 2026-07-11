@@ -93,6 +93,27 @@ SMART_DEFAULTS = {
 }
 
 
+def _compute_dtype_flags():
+    """Return dtype flags aligned with the local GPU / CPU setup.
+
+    - CUDA + bf16 support  -> bf16=True
+    - CUDA without bf16    -> bf16=False, fp16=True (safe fallback)
+    - CPU / no torch       -> bf16=False
+    """
+    try:
+        import torch  # local import: avoid slowing CLI startup
+        if torch.cuda.is_available():
+            if torch.cuda.is_bf16_supported():
+                return {"bf16": True}
+            cap = torch.cuda.get_device_capability()
+            if cap[0] >= 5:
+                return {"bf16": False, "fp16": True}
+            return {"bf16": False}
+        return {"bf16": False}
+    except Exception:
+        return {"bf16": False}
+
+
 def _build_config(model, template, dataset, epochs, finetuning_type, params, output_name):
     config = {
         "model_name_or_path": model,
@@ -101,6 +122,7 @@ def _build_config(model, template, dataset, epochs, finetuning_type, params, out
         "output_dir": os.path.join("saves", output_name, "lora"),
     }
     config.update(SMART_DEFAULTS)
+    config.update(_compute_dtype_flags())
     config["num_train_epochs"] = epochs
     config["finetuning_type"] = finetuning_type
 
@@ -861,7 +883,7 @@ def train(
         "num_train_epochs": epochs,
         "lr_scheduler_type": "cosine",
         "warmup_ratio": 0.1,
-        "bf16": True,
+        **_compute_dtype_flags(),
     }
     success = _write_config_and_train(
         console, config, output_name,
