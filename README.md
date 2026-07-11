@@ -1,12 +1,12 @@
-<p align="center">
-  <pre>
+<div align="center">
+<pre>
    ____                           ___
   / / /___ _____ ___  ____ ______/ (_)
  / / / __ `/ __ `__ \/ __ `/ ___/ / /
 / / / /_/ / / / / / / /_/ / /__/ / /
 /_/_/\__,_/_/ /_/ /_/\__,_/\___/_/_/
-  </pre>
-</p>
+</pre>
+</div>
 
 <p align="center">
   <em>Fine-tune LLMs in your terminal. No config files, no boilerplate.</em>
