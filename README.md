@@ -9,7 +9,7 @@
 </div>
 
 <p align="center">
-  <em>Fine-tune LLMs in your terminal. No config files, no boilerplate.</em>
+  <em>Fine-tune LLMs in your terminal.</em>
 </p>
 
 <p align="center">
