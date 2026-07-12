@@ -125,10 +125,10 @@ def search_models(console: Console, query: str):
     if not _check_hf(console):
         return None
 
-    console.print(f'\n[dim]Searching HuggingFace for "{query}"...[/]\n')
     models = []
     try:
-        results = list(_api.list_models(search=query, sort="downloads", limit=20))
+        with console.status(f'[bold green]Searching HuggingFace for "{query}"...', spinner="dots"):
+            results = list(_api.list_models(search=query, sort="downloads", limit=20))
         results.reverse()
         for m in results:
             tags = getattr(m, "tags", None) or []
@@ -177,10 +177,10 @@ def search_datasets(console: Console, query: str):
     if not _check_hf(console):
         return None
 
-    console.print(f'\n[dim]Searching HuggingFace datasets for "{query}"...[/]\n')
     datasets = []
     try:
-        results = list(_api.list_datasets(search=query, sort="downloads", limit=20))
+        with console.status(f'[bold green]Searching HuggingFace datasets for "{query}"...', spinner="dots"):
+            results = list(_api.list_datasets(search=query, sort="downloads", limit=20))
         results.reverse()
         for d in results:
             datasets.append(d)

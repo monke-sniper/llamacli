@@ -148,13 +148,13 @@ def _install_missing(console: Console, missing: list):
 
     for name in missing:
         args = install_map.get(name, [name.lower().replace(" ", "-")])
-        console.print(f"\n[bold]Installing {args[0]}...[/]")
         try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install"] + args,
-                capture_output=True,
-                text=True,
-            )
+            with console.status(f"[bold green]Installing {args[0]}...", spinner="dots"):
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install"] + args,
+                    capture_output=True,
+                    text=True,
+                )
             if result.returncode == 0:
                 console.print(f"[green]Installed {args[0]}[/]")
             else:

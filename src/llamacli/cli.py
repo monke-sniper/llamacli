@@ -51,6 +51,7 @@ console = Console(
 
 _quiet = False
 _verbose = False
+_no_input = False
 
 MAIN_MENU = [
     questionary.Choice(title="  Quick Train", value="quick_train"),
@@ -82,6 +83,14 @@ def show_main_menu():
         ).ask()
     except (KeyboardInterrupt, EOFError):
         return "exit"
+
+
+def _print_breadcrumb(console, title, current, total):
+    parts = []
+    parts.append(f"[bold cyan]{title}[/bold cyan]")
+    parts.append(f"[dim][{current}/{total}][/dim]")
+    console.print(Panel("  ".join(parts), border_style="dim"), highlight=False)
+    console.print()
 
 
 SMART_DEFAULTS = {
@@ -210,132 +219,218 @@ def _write_config_and_train(console, config, output_name, command="train", targe
 
 def quick_train(console):
     state = get_state()
-    console.print("\n[bold white]Quick Train[/bold white]\n")
+    steps = ["model", "dataset", "epochs", "target_loss", "confirm"]
+    step_idx = 0
+    data = {}
 
-    model, template = prompt_model(console)
-    if not model:
-        console.print("[dim]Cancelled.[/]")
-        return
+    while 0 <= step_idx < len(steps):
+        step = steps[step_idx]
+        _print_breadcrumb(console, "Quick Train", step_idx + 1, len(steps))
 
-    dataset = prompt_dataset(console)
-    if not dataset:
-        console.print("[dim]Cancelled.[/]")
-        return
+        if step == "model":
+            model, template = prompt_model(console, allow_back=False)
+            if not model:
+                console.print("[dim]Cancelled.[/]")
+                return
+            data["model"] = model
+            data["template"] = template
+            step_idx += 1
 
-    epochs_val = console.input("[dim]Number of epochs (default 3): [/]").strip()
-    try:
-        epochs = float(epochs_val) if epochs_val else 3.0
-    except ValueError:
-        console.print("[yellow]Invalid, using 3.0[/]")
-        epochs = 3.0
+        elif step == "dataset":
+            dataset = prompt_dataset(console, allow_back=True)
+            if dataset == "__back__":
+                step_idx -= 1
+                continue
+            if not dataset:
+                console.print("[dim]Cancelled.[/]")
+                return
+            data["dataset"] = dataset
+            step_idx += 1
 
-    target_loss = prompt_target_loss(console)
+        elif step == "epochs":
+            val = console.input("[dim]Number of epochs (default 3, or type 'back' to go back): [/]").strip()
+            if val.lower() in ("back", "b"):
+                step_idx -= 1
+                continue
+            try:
+                epochs = float(val) if val else 3.0
+            except ValueError:
+                console.print("[yellow]Invalid, using 3.0[/]")
+                epochs = 3.0
+            data["epochs"] = epochs
+            step_idx += 1
 
-    config = _build_config(model, template, dataset, epochs, "lora", {}, "", target_loss=target_loss)
-    console.print("\n[dim]Using smart defaults: LoRA rank=8, LR=1e-4, batch=2, cutoff=512[/]")
-    if target_loss is not None:
-        console.print("[dim]Target-loss mode: save_steps=1, logging_steps=1 for precise checkpointing.[/]")
-    table = Table(title="Quick Train Configuration", show_header=False, border_style="white")
-    table.add_column("Key", style="bold white", width=22)
-    table.add_column("Value", style="white")
-    for k in ("model_name_or_path", "template", "dataset", "num_train_epochs",
-              "finetuning_type", "lora_rank", "learning_rate", "cutoff_len"):
-        table.add_row(k, str(config.get(k, "")))
-    if target_loss is not None:
-        table.add_row("target_loss", str(target_loss))
-    console.print(table)
+        elif step == "target_loss":
+            target_loss = prompt_target_loss(console, allow_back=True)
+            if target_loss == "__back__":
+                step_idx -= 1
+                continue
+            data["target_loss"] = target_loss
+            step_idx += 1
 
-    try:
-        confirmed = questionary.confirm("Start training?", default=True).ask()
-    except (KeyboardInterrupt, EOFError):
-        confirmed = False
-    if not confirmed:
-        console.print("[dim]Cancelled.[/]")
-        return
+        elif step == "confirm":
+            config = _build_config(
+                data["model"], data["template"], data["dataset"],
+                data["epochs"], "lora", {}, "",
+                target_loss=data.get("target_loss"),
+            )
+            console.print("\n[dim]Using smart defaults: LoRA rank=8, LR=1e-4, batch=2, cutoff=512[/]")
+            if data.get("target_loss") is not None:
+                console.print("[dim]Target-loss mode: save_steps=1, logging_steps=1 for precise checkpointing.[/]")
+            table = Table(title="Quick Train Configuration", show_header=False, border_style="white")
+            table.add_column("Key", style="bold white", width=22)
+            table.add_column("Value", style="white")
+            for k in ("model_name_or_path", "template", "dataset", "num_train_epochs",
+                      "finetuning_type", "lora_rank", "learning_rate", "cutoff_len"):
+                table.add_row(k, str(config.get(k, "")))
+            if data.get("target_loss") is not None:
+                table.add_row("target_loss", str(data["target_loss"]))
+            console.print(table)
 
-    output_name = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    success = _write_config_and_train(
-        console, config, output_name,
-        command="quick_train",
-        target_loss=target_loss,
-        model=model, template=template, dataset=dataset, epochs=epochs,
-    )
-    if success:
-        console.print(f"\n[green]Training complete! Output: saves/{output_name}/lora[/]")
-        _record_training(output_name, model, dataset, "sft", epochs, template)
-    else:
-        console.print("\n[red]Training failed.[/]")
+            try:
+                confirmed = questionary.confirm("Start training?", default=True).ask()
+            except (KeyboardInterrupt, EOFError):
+                confirmed = False
+            if not confirmed:
+                console.print("[dim]Cancelled.[/]")
+                return
+
+            output_name = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            success = _write_config_and_train(
+                console, config, output_name,
+                command="quick_train",
+                target_loss=data.get("target_loss"),
+                model=data["model"], template=data["template"], dataset=data["dataset"], epochs=data["epochs"],
+            )
+            if success:
+                console.print(f"\n[green]Training complete! Output: saves/{output_name}/lora[/]")
+                _record_training(output_name, data["model"], data["dataset"], "sft", data["epochs"], data["template"])
+            else:
+                console.print("\n[red]Training failed.[/]")
+            return
 
 
 def advanced_train(console):
     state = get_state()
-    console.print("\n[bold white]Advanced Training[/bold white]\n")
+    steps = ["model", "dataset", "stage", "finetuning_type", "params", "target_loss", "output_name", "confirm"]
+    step_idx = 0
+    data = {}
 
-    model, template = prompt_model(console)
-    if not model:
-        console.print("[dim]Cancelled.[/]")
-        return
+    while 0 <= step_idx < len(steps):
+        step = steps[step_idx]
+        _print_breadcrumb(console, "Advanced Training", step_idx + 1, len(steps))
 
-    dataset = prompt_dataset(console)
-    if not dataset:
-        console.print("[dim]Cancelled.[/]")
-        return
+        if step == "model":
+            model, template = prompt_model(console, allow_back=False)
+            if not model:
+                console.print("[dim]Cancelled.[/]")
+                return
+            data["model"] = model
+            data["template"] = template
+            step_idx += 1
 
-    stage = prompt_stage(console)
-    if not stage:
-        console.print("[dim]Cancelled.[/]")
-        return
+        elif step == "dataset":
+            dataset = prompt_dataset(console, allow_back=True)
+            if dataset == "__back__":
+                step_idx -= 1
+                continue
+            if not dataset:
+                console.print("[dim]Cancelled.[/]")
+                return
+            data["dataset"] = dataset
+            step_idx += 1
 
-    finetuning_type = prompt_finetuning_type(console)
-    if not finetuning_type:
-        console.print("[dim]Cancelled.[/]")
-        return
+        elif step == "stage":
+            stage = prompt_stage(console, allow_back=True)
+            if stage == "__back__":
+                step_idx -= 1
+                continue
+            if not stage:
+                console.print("[dim]Cancelled.[/]")
+                return
+            data["stage"] = stage
+            step_idx += 1
 
-    params = prompt_training_params(console, finetuning_type)
-    if not params:
-        console.print("[dim]Cancelled.[/]")
-        return
+        elif step == "finetuning_type":
+            finetuning_type = prompt_finetuning_type(console, allow_back=True)
+            if finetuning_type == "__back__":
+                step_idx -= 1
+                continue
+            if not finetuning_type:
+                console.print("[dim]Cancelled.[/]")
+                return
+            data["finetuning_type"] = finetuning_type
+            step_idx += 1
 
-    target_loss = prompt_target_loss(console)
+        elif step == "params":
+            params = prompt_training_params(console, data["finetuning_type"], allow_back=True)
+            if params == "__back__":
+                step_idx -= 1
+                continue
+            if not params:
+                console.print("[dim]Cancelled.[/]")
+                return
+            data["params"] = params
+            step_idx += 1
 
-    output_name = console.input(
-        f"[dim]Output name (default: run_{datetime.now().strftime('%Y%m%d_%H%M%S')}): [/]"
-    ).strip()
-    if not output_name:
-        output_name = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        elif step == "target_loss":
+            target_loss = prompt_target_loss(console, allow_back=True)
+            if target_loss == "__back__":
+                step_idx -= 1
+                continue
+            data["target_loss"] = target_loss
+            step_idx += 1
 
-    config = _build_config(model, template, dataset, params.get("epochs", 3), finetuning_type, params, output_name, target_loss=target_loss)
-    config["stage"] = stage
-    if target_loss is not None:
-        console.print("[dim]Target-loss mode: save_steps=1, logging_steps=1 for precise checkpointing.[/]")
+        elif step == "output_name":
+            val = console.input(
+                f"[dim]Output name (default: run_{datetime.now().strftime('%Y%m%d_%H%M%S')}, or type 'back' to go back): [/]"
+            ).strip()
+            if val.lower() in ("back", "b"):
+                step_idx -= 1
+                continue
+            if not val:
+                val = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            data["output_name"] = val
+            step_idx += 1
 
-    table = Table(title="Confirm Training Configuration", show_header=False, border_style="white")
-    table.add_column("Key", style="bold white", width=22)
-    table.add_column("Value", style="white")
-    for k, v in config.items():
-        table.add_row(k, str(v))
-    console.print(table)
+        elif step == "confirm":
+            config = _build_config(
+                data["model"], data["template"], data["dataset"],
+                data["params"].get("epochs", 3), data["finetuning_type"], data["params"], data["output_name"],
+                target_loss=data.get("target_loss"),
+            )
+            config["stage"] = data["stage"]
+            if data.get("target_loss") is not None:
+                console.print("[dim]Target-loss mode: save_steps=1, logging_steps=1 for precise checkpointing.[/]")
 
-    try:
-        confirmed = questionary.confirm("Start training?", default=True).ask()
-    except (KeyboardInterrupt, EOFError):
-        confirmed = False
-    if not confirmed:
-        console.print("[dim]Cancelled.[/]")
-        return
+            table = Table(title="Confirm Training Configuration", show_header=False, border_style="white")
+            table.add_column("Key", style="bold white", width=22)
+            table.add_column("Value", style="white")
+            for k, v in config.items():
+                table.add_row(k, str(v))
+            console.print(table)
 
-    success = _write_config_and_train(
-        console, config, output_name,
-        command="advanced_train",
-        target_loss=target_loss,
-        model=model, template=template, dataset=dataset, stage=stage,
-        finetuning_type=finetuning_type, epochs=params.get("epochs", 3),
-    )
-    if success:
-        console.print(f"\n[green]Training complete! Output: saves/{output_name}/lora[/]")
-        _record_training(output_name, model, dataset, stage, params.get("epochs", 3), template)
-    else:
-        console.print("\n[red]Training failed.[/]")
+            try:
+                confirmed = questionary.confirm("Start training?", default=True).ask()
+            except (KeyboardInterrupt, EOFError):
+                confirmed = False
+            if not confirmed:
+                console.print("[dim]Cancelled.[/]")
+                return
+
+            success = _write_config_and_train(
+                console, config, data["output_name"],
+                command="advanced_train",
+                target_loss=data.get("target_loss"),
+                model=data["model"], template=data["template"], dataset=data["dataset"], stage=data["stage"],
+                finetuning_type=data["finetuning_type"], epochs=data["params"].get("epochs", 3),
+            )
+            if success:
+                console.print(f"\n[green]Training complete! Output: saves/{data['output_name']}/lora[/]")
+                _record_training(data["output_name"], data["model"], data["dataset"], data["stage"], data["params"].get("epochs", 3), data["template"])
+            else:
+                console.print("\n[red]Training failed.[/]")
+            return
 
 
 def chat_trained(console):
@@ -366,8 +461,11 @@ def chat_trained(console):
 
 def quick_chat(console):
     console.print("\n[bold white]Quick Chat[/bold white]\n")
-    model, adapter, template = prompt_chat_model(console)
+    model, adapter, template = prompt_chat_model(console, allow_back=False)
     if not model:
+        console.print("[dim]Cancelled.[/]")
+        return
+    if model == "__back__":
         console.print("[dim]Cancelled.[/]")
         return
     _start_chat(console, model, adapter, template)
@@ -393,9 +491,9 @@ def _start_chat(console, model, adapter, template):
     if adapter:
         config["adapter_name_or_path"] = adapter
 
-    console.print("[dim]Loading model...[/]")
     try:
-        chat_model = ChatModel(config)
+        with console.status("[bold green]Loading model into memory...", spinner="dots"):
+            chat_model = ChatModel(config)
     except FileNotFoundError as e:
         console.print(f"[red]Model not found locally: {model}[/]")
         console.print(f"[dim]Use 'Download Model' from the menu to download it first.[/]")
@@ -460,44 +558,66 @@ def yaml_train_screen(console):
         console.print(f"[dim]Drop saved .yaml configs into {YAML_DIR} to train from them.[/]")
         return
 
-    choices = []
-    for f in yaml_files:
-        choices.append(questionary.Choice(title=f"  {f}", value=os.path.join(YAML_DIR, f)))
-    choices.append(questionary.Choice(title="  Custom path...", value="__custom__"))
+    steps = ["select_yaml", "output_name", "confirm"]
+    step_idx = 0
+    data = {}
 
-    try:
-        selected = questionary.select(
-            "Select a YAML config:",
-            choices=choices,
-            pointer=">",
-            use_arrow_keys=True,
-            use_jk_keys=True,
-        ).ask()
-    except (KeyboardInterrupt, EOFError):
-        return
+    while 0 <= step_idx < len(steps):
+        step = steps[step_idx]
+        _print_breadcrumb(console, "Train from YAML", step_idx + 1, len(steps))
 
-    if not selected:
-        return
-    if selected == "__custom__":
-        path = console.input("[dim]Path to YAML config: [/]").strip()
-        if not path:
-            console.print("[dim]Cancelled.[/]")
+        if step == "select_yaml":
+            choices = []
+            for f in yaml_files:
+                choices.append(questionary.Choice(title=f"  {f}", value=os.path.join(YAML_DIR, f)))
+            choices.append(questionary.Choice(title="  Custom path...", value="__custom__"))
+            choices.append(questionary.Choice(title="  ← Cancel", value="__cancel__"))
+
+            try:
+                selected = questionary.select(
+                    "Select a YAML config:",
+                    choices=choices,
+                    pointer=">",
+                    use_arrow_keys=True,
+                    use_jk_keys=True,
+                ).ask()
+            except (KeyboardInterrupt, EOFError):
+                console.print("[dim]Cancelled.[/]")
+                return
+
+            if selected == "__cancel__" or not selected:
+                console.print("[dim]Cancelled.[/]")
+                return
+            if selected == "__custom__":
+                path = console.input("[dim]Path to YAML config (or type 'back' to cancel): [/]").strip()
+                if path.lower() in ("back", "b") or not path:
+                    console.print("[dim]Cancelled.[/]")
+                    return
+                selected = path
+            data["selected"] = selected
+            step_idx += 1
+
+        elif step == "output_name":
+            val = console.input(
+                f"[dim]Output name (default: run_{datetime.now().strftime('%Y%m%d_%H%M%S')}, or type 'back' to go back): [/]"
+            ).strip()
+            if val.lower() in ("back", "b"):
+                step_idx -= 1
+                continue
+            if not val:
+                val = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            data["output_name"] = val
+            step_idx += 1
+
+        elif step == "confirm":
+            # For YAML training we run the YAML directly without rebuilding a config
+            console.print("\n[dim]Training directly from saved YAML.[/]")
+            success = run_training(console, data["selected"], data["output_name"])
+            if success:
+                console.print(f"\n[green]Training complete! Output: saves/{data['output_name']}/lora[/]")
+            else:
+                console.print("\n[red]Training failed.[/]")
             return
-        selected = path
-
-    output_name = console.input(
-        f"[dim]Output name (default: run_{datetime.now().strftime('%Y%m%d_%H%M%S')}): [/]"
-    ).strip()
-    if not output_name:
-        output_name = f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-    # For YAML training we run the YAML directly without rebuilding a config
-    console.print("\n[dim]Training directly from saved YAML.[/]")
-    success = run_training(console, selected, output_name)
-    if success:
-        console.print(f"\n[green]Training complete! Output: saves/{output_name}/lora[/]")
-    else:
-        console.print("\n[red]Training failed.[/]")
 
 
 def view_models_screen(console):
@@ -568,111 +688,170 @@ def view_datasets_screen(console):
 
 def add_dataset_screen(console):
     from . import DATA_DIR, DATASET_INFO
-    console.print("\n[bold white]Add Dataset[/bold white]\n")
+    steps = ["name", "source", "details", "confirm"]
+    step_idx = 0
+    data = {}
 
-    name = console.input("[dim]Dataset name (used in configs): [/]").strip()
-    if not name:
-        console.print("[dim]Cancelled.[/]")
-        return
+    while 0 <= step_idx < len(steps):
+        step = steps[step_idx]
+        _print_breadcrumb(console, "Add Dataset", step_idx + 1, len(steps))
 
-    console.print("[dim]Source type:[/]")
-    src = questionary.select(
-        "Where is the data?",
-        choices=[
-            questionary.Choice("Local file in data/ (e.g. my_data.json)", value="file"),
-            questionary.Choice("HuggingFace dataset (hf_hub_url)", value="hf"),
-        ],
-        pointer=">",
-        use_arrow_keys=True,
-        use_jk_keys=True,
-    ).ask()
+        if step == "name":
+            name = console.input("[dim]Dataset name (used in configs, or type 'back' to cancel): [/]").strip()
+            if name.lower() in ("back", "b"):
+                console.print("[dim]Cancelled.[/]")
+                return
+            if not name:
+                console.print("[dim]Cancelled.[/]")
+                return
+            data["name"] = name
+            step_idx += 1
 
-    if not src:
-        return
+        elif step == "source":
+            src = questionary.select(
+                "Where is the data?",
+                choices=[
+                    questionary.Choice("Local file in data/ (e.g. my_data.json)", value="file"),
+                    questionary.Choice("HuggingFace dataset (hf_hub_url)", value="hf"),
+                    questionary.Choice("← Back", value="__back__"),
+                ],
+                pointer=">",
+                use_arrow_keys=True,
+                use_jk_keys=True,
+            ).ask()
+            if src == "__back__":
+                step_idx -= 1
+                continue
+            if not src:
+                console.print("[dim]Cancelled.[/]")
+                return
+            data["source"] = src
+            step_idx += 1
 
-    if src == "file":
-        file_name = console.input(f"[dim]Filename in {DATA_DIR}/ (e.g. my_data.json): [/]").strip()
-        if not file_name:
+        elif step == "details":
+            if data["source"] == "file":
+                file_name = console.input(f"[dim]Filename in {DATA_DIR}/ (e.g. my_data.json, or type 'back'): [/]").strip()
+                if file_name.lower() in ("back", "b"):
+                    step_idx -= 1
+                    continue
+                if not file_name:
+                    console.print("[dim]Cancelled.[/]")
+                    return
+                data["file_name"] = file_name
+            else:
+                url = console.input("[dim]HuggingFace dataset URL (or type 'back'): [/]").strip()
+                if url.lower() in ("back", "b"):
+                    step_idx -= 1
+                    continue
+                if not url:
+                    console.print("[dim]Cancelled.[/]")
+                    return
+                data["url"] = url
+
+            fmt = questionary.select(
+                "Format:",
+                choices=[
+                    questionary.Choice("alpaca (instruction/input/output)", value="alpaca"),
+                    questionary.Choice("sharegpt (messages)", value="sharegpt"),
+                    questionary.Choice("← Back", value="__back__"),
+                ],
+                pointer=">",
+                use_arrow_keys=True,
+                use_jk_keys=True,
+            ).ask()
+            if fmt == "__back__":
+                step_idx -= 1
+                continue
+            if not fmt:
+                console.print("[dim]Cancelled.[/]")
+                return
+            data["format"] = fmt
+            step_idx += 1
+
+        elif step == "confirm":
+            if data["source"] == "file":
+                entry = {"file_name": data["file_name"], "formatting": data["format"]}
+            else:
+                entry = {"hf_hub_url": data["url"], "formatting": data["format"]}
+
+            os.makedirs(DATA_DIR, exist_ok=True)
+            registry = {}
+            if os.path.isfile(DATASET_INFO):
+                with open(DATASET_INFO, "r", encoding="utf-8") as f:
+                    registry = json.load(f)
+            registry[data["name"]] = entry
+            with open(DATASET_INFO, "w", encoding="utf-8") as f:
+                json.dump(registry, f, indent=2, ensure_ascii=False)
+            console.print(f"[green]Dataset '{data['name']}' added to dataset_info.json[/]")
             return
-        fmt = questionary.select(
-            "Format:",
-            choices=[
-                questionary.Choice("alpaca (instruction/input/output)", value="alpaca"),
-                questionary.Choice("sharegpt (messages)", value="sharegpt"),
-            ],
-            pointer=">",
-            use_arrow_keys=True,
-            use_jk_keys=True,
-        ).ask()
-        if not fmt:
-            return
-        entry = {"file_name": file_name, "formatting": fmt}
-    else:
-        url = console.input("[dim]HuggingFace dataset URL: [/]").strip()
-        if not url:
-            return
-        fmt = questionary.select(
-            "Format:",
-            choices=[
-                questionary.Choice("alpaca", value="alpaca"),
-                questionary.Choice("sharegpt", value="sharegpt"),
-            ],
-            pointer=">",
-            use_arrow_keys=True,
-            use_jk_keys=True,
-        ).ask()
-        if not fmt:
-            return
-        entry = {"hf_hub_url": url, "formatting": fmt}
-
-    os.makedirs(DATA_DIR, exist_ok=True)
-    registry = {}
-    if os.path.isfile(DATASET_INFO):
-        with open(DATASET_INFO, "r", encoding="utf-8") as f:
-            registry = json.load(f)
-    registry[name] = entry
-    with open(DATASET_INFO, "w", encoding="utf-8") as f:
-        json.dump(registry, f, indent=2, ensure_ascii=False)
-    console.print(f"[green]Dataset '{name}' added to dataset_info.json[/]")
 
 
 def export_screen(console):
     state = get_state()
-    console.print("\n[bold white]Export / Merge Adapter[/bold white]\n")
+    steps = ["adapter", "dest", "confirm"]
+    step_idx = 0
+    data = {}
 
-    adapter = console.input(
-        f"[dim]Adapter path (default: {state.active_adapter or 'none'}): [/]"
-    ).strip()
-    if not adapter:
-        adapter = state.active_adapter
-    if not adapter:
-        console.print("[yellow]No adapter specified.[/]")
-        return
+    while 0 <= step_idx < len(steps):
+        step = steps[step_idx]
+        _print_breadcrumb(console, "Export / Merge Adapter", step_idx + 1, len(steps))
 
-    dest_default = os.path.join(
-        "models",
-        os.path.basename(adapter.rstrip("/\\").replace("/lora", "").replace("\\lora", "")),
-    )
-    dest = console.input(f"[dim]Export destination (default: {dest_default}): [/]").strip()
-    if not dest:
-        dest = dest_default
+        if step == "adapter":
+            adapter = console.input(
+                f"[dim]Adapter path (default: {state.active_adapter or 'none'}, or type 'back' to cancel): [/]"
+            ).strip()
+            if adapter.lower() in ("back", "b"):
+                console.print("[dim]Cancelled.[/]")
+                return
+            if not adapter:
+                adapter = state.active_adapter
+            if not adapter:
+                console.print("[yellow]No adapter specified.[/]")
+                return
+            data["adapter"] = adapter
+            step_idx += 1
 
-    config = {
-        "model_name_or_path": state.active_model or "Qwen/Qwen3-0.6B",
-        "adapter_name_or_path": adapter,
-        "template": state.active_template or "qwen3",
-        "finetuning_type": "lora",
-        "export_dir": dest,
-        "export_size": 2,
-        "export_legacy_format": False,
-    }
+        elif step == "dest":
+            dest_default = os.path.join(
+                "models",
+                os.path.basename(data["adapter"].rstrip("/\\").replace("/lora", "").replace("\\lora", "")),
+            )
+            dest = console.input(f"[dim]Export destination (default: {dest_default}, or type 'back' to go back): [/]").strip()
+            if dest.lower() in ("back", "b"):
+                step_idx -= 1
+                continue
+            if not dest:
+                dest = dest_default
+            data["dest"] = dest
+            step_idx += 1
 
-    os.makedirs(CONFIGS_DIR, exist_ok=True)
-    config_path = os.path.join(CONFIGS_DIR, "llamacli_export_temp.yaml")
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+        elif step == "confirm":
+            config = {
+                "model_name_or_path": state.active_model or "Qwen/Qwen3-0.6B",
+                "adapter_name_or_path": data["adapter"],
+                "template": state.active_template or "qwen3",
+                "finetuning_type": "lora",
+                "export_dir": data["dest"],
+                "export_size": 2,
+                "export_legacy_format": False,
+            }
 
-    run_export(console, config_path)
+            os.makedirs(CONFIGS_DIR, exist_ok=True)
+            config_path = os.path.join(CONFIGS_DIR, "llamacli_export_temp.yaml")
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+
+            try:
+                confirmed = questionary.confirm("Proceed with export?", default=True).ask()
+            except (KeyboardInterrupt, EOFError):
+                console.print("[dim]Cancelled.[/]")
+                return
+            if not confirmed:
+                console.print("[dim]Cancelled.[/]")
+                return
+
+            run_export(console, config_path)
+            return
 
 
 def workspace_info_screen(console):
@@ -880,11 +1059,13 @@ def main(
     no_color: bool = typer.Option(False, "--no-color", help="Disable colored output"),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress non-essential output"),
     verbose: bool = typer.Option(False, "--verbose", "--debug", help="Verbose output"),
+    no_input: bool = typer.Option(False, "--no-input", help="Disable interactive prompts (non-TTY / CI mode)"),
 ):
-    global console, _quiet, _verbose
+    global console, _quiet, _verbose, _no_input
 
     _quiet = quiet
     _verbose = verbose
+    _no_input = no_input
 
     if workspace:
         os.environ["LLAMACLII_WORKSPACE"] = workspace
@@ -906,6 +1087,13 @@ def main(
         console.print(f"[white]llamacli[/] [bold]{PROJECT_ROOT}[/]")
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
+        if no_input:
+            console.print("[red]--no-input passed but no subcommand given.[/]")
+            console.print("[dim]Use subcommands with explicit flags instead of interactive mode:[/]")
+            console.print("  llamacli train --config <path>")
+            console.print("  llamacli chat --model <model_id>")
+            console.print("  llamacli export --adapter <path> --dest <dir>")
+            raise typer.Exit(code=1)
         _check_first_run(console)
         interactive_loop()
 

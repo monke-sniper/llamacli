@@ -134,34 +134,33 @@ def ensure_isolated_venv(console: Console):
         )
         return False
 
-    console.print(f"[dim]Creating isolated environment ({py_exe})...[/]")
     try:
-        subprocess.run([py_exe, "-m", "venv", venv_dir], check=True)
+        with console.status(f"[bold green]Creating isolated environment ({py_exe})...", spinner="dots"):
+            subprocess.run([py_exe, "-m", "venv", venv_dir], check=True)
     except subprocess.CalledProcessError as exc:
         console.print(f"[red]Failed to create venv: {exc}[/]")
         return False
 
     # Upgrade pip
     try:
-        subprocess.run(
-            [venv_pip, "install", "--upgrade", "pip"],
-            capture_output=True, timeout=120,
-        )
+        with console.status("[bold green]Upgrading pip...", spinner="dots"):
+            subprocess.run(
+                [venv_pip, "install", "--upgrade", "pip"],
+                capture_output=True, timeout=120,
+            )
     except subprocess.TimeoutExpired:
         pass  # non-fatal
 
     # Install torch with CUDA
-    console.print(
-        "[dim]Installing CUDA PyTorch into isolated environment...[/]"
-    )
     try:
-        subprocess.run(
-            [
-                venv_pip, "install", "torch", "torchvision", "torchaudio",
-                "--index-url", "https://download.pytorch.org/whl/cu124",
-            ],
-            check=True, timeout=900,
-        )
+        with console.status("[bold green]Installing CUDA PyTorch... (this may take several minutes)", spinner="dots"):
+            subprocess.run(
+                [
+                    venv_pip, "install", "torch", "torchvision", "torchaudio",
+                    "--index-url", "https://download.pytorch.org/whl/cu124",
+                ],
+                check=True, timeout=900,
+            )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         console.print(
             "[red]Failed to install CUDA PyTorch. Check your internet.[/]"
@@ -169,19 +168,19 @@ def ensure_isolated_venv(console: Console):
         return False
 
     # Install the llamacli package itself
-    console.print("[dim]Installing llamacli into isolated environment...[/]")
     repo_root = _project_root_for_editable_install()
     try:
-        if repo_root:
-            subprocess.run(
-                [venv_pip, "install", "-e", repo_root],
-                check=True, timeout=300,
-            )
-        else:
-            subprocess.run(
-                [venv_pip, "install", "llamacli"],
-                check=True, timeout=300,
-            )
+        with console.status("[bold green]Installing llamacli into isolated environment...", spinner="dots"):
+            if repo_root:
+                subprocess.run(
+                    [venv_pip, "install", "-e", repo_root],
+                    check=True, timeout=300,
+                )
+            else:
+                subprocess.run(
+                    [venv_pip, "install", "llamacli"],
+                    check=True, timeout=300,
+                )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         console.print(
             "[red]Failed to install llamacli into isolated environment.[/]"

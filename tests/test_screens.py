@@ -23,9 +23,9 @@ def _fake_confirm_no(*a, **k):
 
 class TestQuickTrainScreen:
     def test_runs_and_creates_yaml(self, temp_workspace, mock_console, monkeypatch):
-        monkeypatch.setattr(cli_mod, "prompt_model", lambda c: ("Qwen/Qwen3-0.6B", "qwen3"))
-        monkeypatch.setattr(cli_mod, "prompt_dataset", lambda c: "identity")
-        monkeypatch.setattr(cli_mod, "prompt_target_loss", lambda c: None)
+        monkeypatch.setattr(cli_mod, "prompt_model", lambda c, **kw: ("Qwen/Qwen3-0.6B", "qwen3"))
+        monkeypatch.setattr(cli_mod, "prompt_dataset", lambda c, **kw: "identity")
+        monkeypatch.setattr(cli_mod, "prompt_target_loss", lambda c, **kw: None)
         monkeypatch.setattr(mock_console, "input", lambda prompt: "3")
         monkeypatch.setattr(cli_mod.questionary, "confirm", _fake_confirm_yes)
         monkeypatch.setattr(cli_mod, "run_training", lambda c, p, o, target_loss=None: True)
@@ -43,9 +43,9 @@ class TestQuickTrainScreen:
         assert state.training_history[-1]["dataset"] == "identity"
 
     def test_shows_config_table(self, temp_workspace, mock_console, monkeypatch):
-        monkeypatch.setattr(cli_mod, "prompt_model", lambda c: ("Qwen/Qwen3-0.6B", "qwen3"))
-        monkeypatch.setattr(cli_mod, "prompt_dataset", lambda c: "identity")
-        monkeypatch.setattr(cli_mod, "prompt_target_loss", lambda c: None)
+        monkeypatch.setattr(cli_mod, "prompt_model", lambda c, **kw: ("Qwen/Qwen3-0.6B", "qwen3"))
+        monkeypatch.setattr(cli_mod, "prompt_dataset", lambda c, **kw: "identity")
+        monkeypatch.setattr(cli_mod, "prompt_target_loss", lambda c, **kw: None)
         monkeypatch.setattr(mock_console, "input", lambda prompt: "3")
         monkeypatch.setattr(cli_mod.questionary, "confirm", _fake_confirm_no)
 
@@ -58,13 +58,13 @@ class TestQuickTrainScreen:
 
 class TestAdvancedTrainScreen:
     def test_runs_and_creates_yaml(self, temp_workspace, mock_console, monkeypatch):
-        monkeypatch.setattr(cli_mod, "prompt_model", lambda c: ("Qwen/Qwen3-0.6B", "qwen3"))
-        monkeypatch.setattr(cli_mod, "prompt_dataset", lambda c: "identity")
-        monkeypatch.setattr(cli_mod, "prompt_stage", lambda c: "sft")
-        monkeypatch.setattr(cli_mod, "prompt_finetuning_type", lambda c: "lora")
+        monkeypatch.setattr(cli_mod, "prompt_model", lambda c, **kw: ("Qwen/Qwen3-0.6B", "qwen3"))
+        monkeypatch.setattr(cli_mod, "prompt_dataset", lambda c, **kw: "identity")
+        monkeypatch.setattr(cli_mod, "prompt_stage", lambda c, **kw: "sft")
+        monkeypatch.setattr(cli_mod, "prompt_finetuning_type", lambda c, **kw: "lora")
         monkeypatch.setattr(
             cli_mod, "prompt_training_params",
-            lambda c, ft: {
+            lambda c, ft, **kw: {
                 "epochs": 2,
                 "learning_rate": 5e-5,
                 "batch_size": 1,
@@ -73,7 +73,7 @@ class TestAdvancedTrainScreen:
                 "warmup_ratio": 0.1,
             },
         )
-        monkeypatch.setattr(cli_mod, "prompt_target_loss", lambda c: None)
+        monkeypatch.setattr(cli_mod, "prompt_target_loss", lambda c, **kw: None)
         monkeypatch.setattr(mock_console, "input", lambda prompt: "adv_run")
         monkeypatch.setattr(cli_mod.questionary, "confirm", _fake_confirm_yes)
         monkeypatch.setattr(cli_mod, "run_training", lambda c, p, o, target_loss=None: True)

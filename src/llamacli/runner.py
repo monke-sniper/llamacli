@@ -315,13 +315,13 @@ def run_training(console: Console, config_path: str, output_name: str, target_lo
 
 
 def run_export(console: Console, config_path: str):
-    console.print("\n[bold]Exporting model...[/]\n")
     try:
-        result = subprocess.run(
-            [_get_cli(), "export", config_path],
-            text=True,
-            capture_output=True,
-        )
+        with console.status("[bold green]Exporting / merging model...", spinner="dots"):
+            result = subprocess.run(
+                [_get_cli(), "export", config_path],
+                text=True,
+                capture_output=True,
+            )
         output = (result.stdout or "") + (result.stderr or "")
         for line in output.split("\n"):
             if line.strip():

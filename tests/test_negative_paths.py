@@ -23,9 +23,9 @@ def _fake_confirm_no(*a, **k):
 
 class TestNegativePaths:
     def test_cancel_at_confirm_skips_training_and_yaml(self, temp_workspace, mock_console, monkeypatch):
-        monkeypatch.setattr(cli_mod, "prompt_model", lambda c: ("m", "t"))
-        monkeypatch.setattr(cli_mod, "prompt_dataset", lambda c: "ds")
-        monkeypatch.setattr(cli_mod, "prompt_target_loss", lambda c: None)
+        monkeypatch.setattr(cli_mod, "prompt_model", lambda c, **kw: ("m", "t"))
+        monkeypatch.setattr(cli_mod, "prompt_dataset", lambda c, **kw: "ds")
+        monkeypatch.setattr(cli_mod, "prompt_target_loss", lambda c, **kw: None)
         monkeypatch.setattr(mock_console, "input", lambda prompt: "3")
         monkeypatch.setattr(cli_mod.questionary, "confirm", _fake_confirm_no)
 
@@ -45,9 +45,9 @@ class TestNegativePaths:
     def test_failed_run_does_not_record_history(self, temp_workspace, mock_console, monkeypatch):
         import llamacli.state as state_mod
 
-        monkeypatch.setattr(cli_mod, "prompt_model", lambda c: ("m", "t"))
-        monkeypatch.setattr(cli_mod, "prompt_dataset", lambda c: "ds")
-        monkeypatch.setattr(cli_mod, "prompt_target_loss", lambda c: None)
+        monkeypatch.setattr(cli_mod, "prompt_model", lambda c, **kw: ("m", "t"))
+        monkeypatch.setattr(cli_mod, "prompt_dataset", lambda c, **kw: "ds")
+        monkeypatch.setattr(cli_mod, "prompt_target_loss", lambda c, **kw: None)
         monkeypatch.setattr(mock_console, "input", lambda prompt: "3")
         monkeypatch.setattr(cli_mod.questionary, "confirm", _fake_confirm_yes)
         monkeypatch.setattr(cli_mod, "run_training", lambda c, p, o, **kw: False)
@@ -67,7 +67,7 @@ class TestNegativePaths:
         assert os.listdir(configs_dir)
 
     def test_cancel_at_model_prompt_aborts(self, temp_workspace, mock_console, monkeypatch):
-        monkeypatch.setattr(cli_mod, "prompt_model", lambda c: (None, None))
+        monkeypatch.setattr(cli_mod, "prompt_model", lambda c, **kw: (None, None))
         run_training_called = [False]
         monkeypatch.setattr(cli_mod, "run_training", lambda c, p, o, **kw: run_training_called.__setitem__(0, True) or True)
         cli_mod.quick_train(mock_console)
@@ -76,8 +76,8 @@ class TestNegativePaths:
         assert "Cancelled" in text
 
     def test_cancel_at_dataset_prompt_aborts(self, temp_workspace, mock_console, monkeypatch):
-        monkeypatch.setattr(cli_mod, "prompt_model", lambda c: ("m", "t"))
-        monkeypatch.setattr(cli_mod, "prompt_dataset", lambda c: None)
+        monkeypatch.setattr(cli_mod, "prompt_model", lambda c, **kw: ("m", "t"))
+        monkeypatch.setattr(cli_mod, "prompt_dataset", lambda c, **kw: None)
         run_training_called = [False]
         monkeypatch.setattr(cli_mod, "run_training", lambda c, p, o, **kw: run_training_called.__setitem__(0, True) or True)
         cli_mod.quick_train(mock_console)

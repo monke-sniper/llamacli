@@ -374,65 +374,86 @@ def _count_demo_dataset(name):
     return 0
 
 
-def prompt_model(console: Console):
-    cached = _list_cached_models()
+def prompt_model(console: Console, allow_back: bool = False):
     state = get_state()
-    if not cached:
-        console.print(f"[yellow]No cached models found.[/]")
-        console.print(f"[dim]Use 'Download Model' from the menu to search HuggingFace.[/]")
-        path = console.input("[dim]Or enter a HuggingFace model ID (e.g. Qwen/Qwen3-0.6B): [/]").strip()
-        if not path:
+
+    while True:
+        cached = _list_cached_models()
+        if not cached:
+            console.print(f"[yellow]No cached models found.[/]")
+            console.print(f"[dim]Use 'Download Model' from the menu to search HuggingFace.[/]")
+            path = console.input("[dim]Or enter a HuggingFace model ID (e.g. Qwen/Qwen3-0.6B): [/]").strip()
+            if not path:
+                return ("__back__", None) if allow_back else (None, None)
+            detected = detect_template(path)
+            return path, detected
+
+        choices = []
+        if allow_back:
+            choices.append(questionary.Choice(title="← Back", value="__back__"))
+        for m in cached:
+            label = f"{m['repo_id']} ({m['size_gb']:.1f} GB)"
+            if m["repo_id"] == state.active_model:
+                label += " [active]"
+            choices.append(questionary.Choice(title=label, value=m["repo_id"]))
+        choices.append(questionary.Choice(title="Custom path...", value="__custom__"))
+
+        try:
+            selected = questionary.select(
+                "Select a model:",
+                choices=choices,
+                default=choices[1] if allow_back and len(choices) > 1 else (choices[0] if choices else None),
+                pointer=">",
+                use_arrow_keys=True,
+                use_jk_keys=True,
+                instruction="(j/k to move, Enter to select)",
+            ).ask()
+        except (KeyboardInterrupt, EOFError):
+            return ("__back__", None) if allow_back else (None, None)
+
+        if selected == "__back__":
+            return "__back__", None
+        if selected == "__custom__":
+            path = console.input("[dim]Enter HuggingFace model path: [/]").strip()
+            if not path:
+                if allow_back:
+                    continue
+                return None, None
+            selected = path
+        if not selected:
+            if allow_back:
+                continue
             return None, None
-        detected = detect_template(path)
-        return path, detected
 
-    choices = []
-    for m in cached:
-        label = f"{m['repo_id']} ({m['size_gb']:.1f} GB)"
-        if m["repo_id"] == state.active_model:
-            label += " [active]"
-        choices.append(questionary.Choice(title=label, value=m["repo_id"]))
-    choices.append(questionary.Choice(title="Custom path...", value="__custom__"))
+        detected = detect_template(selected)
+        template_choices = []
+        if allow_back:
+            template_choices.append(questionary.Choice(title="← Back", value="__back__"))
+        for t in TEMPLATES:
+            template_choices.append(questionary.Choice(title=t, value=t))
+        try:
+            template = questionary.select(
+                f"Select template (auto-detected: {detected}):",
+                choices=template_choices,
+                default=detected if detected in TEMPLATES else "qwen3",
+                pointer=">",
+                use_arrow_keys=True,
+                use_jk_keys=True,
+                instruction="(template affects chat format)",
+            ).ask()
+        except (KeyboardInterrupt, EOFError):
+            return ("__back__", None) if allow_back else (selected, detected)
 
-    try:
-        selected = questionary.select(
-            "Select a model:",
-            choices=choices,
-            default=choices[0] if choices else None,
-            pointer=">",
-            use_arrow_keys=True,
-            use_jk_keys=True,
-            instruction="(j/k to move, Enter to select)",
-        ).ask()
-    except (KeyboardInterrupt, EOFError):
-        return None, None
-
-    if selected == "__custom__":
-        path = console.input("[dim]Enter HuggingFace model path: [/]").strip()
-        if not path:
-            return None, None
-        selected = path
-    if not selected:
-        return None, None
-
-    detected = detect_template(selected)
-    try:
-        template = questionary.select(
-            f"Select template (auto-detected: {detected}):",
-            choices=TEMPLATES,
-            default=detected if detected in TEMPLATES else "qwen3",
-            pointer=">",
-            use_arrow_keys=True,
-            use_jk_keys=True,
-            instruction="(template affects chat format)",
-        ).ask()
-    except (KeyboardInterrupt, EOFError):
-        return selected, detected
-
-    return selected, template
+        if template == "__back__":
+            continue
+        if not template:
+            if allow_back:
+                continue
+            return selected, detected
+        return selected, template
 
 
-def prompt_dataset(console: Console):
+def prompt_dataset(console: Console, allow_back: bool = False):
     from . import DATA_DIR
 
     datasets = _list_datasets()
@@ -444,6 +465,8 @@ def prompt_dataset(console: Console):
             console.print(f"[dim]You can use a built-in demo dataset below, drop files in {DATA_DIR}, or use 'Add Dataset'.[/]")
             console.print()
             choices = []
+            if allow_back:
+                choices.append(questionary.Choice(title="← Back", value="__back__"))
             for d in demo_datasets:
                 cnt = _count_demo_dataset(d["name"])
                 label = f"{d['name']} ({cnt} ex, {d['format']}) [demo]"
@@ -465,10 +488,12 @@ def prompt_dataset(console: Console):
 
             if selected is None:
                 return None
+            if "__back__" in (selected or []):
+                return "__back__"
             if isinstance(selected, list) and len(selected) == 0:
                 console.print("[yellow]No dataset selected. Press Space on a dataset to select it, then Enter to confirm.[/]")
                 return None
-            filtered = [s for s in selected if s != "__custom__"]
+            filtered = [s for s in selected if s not in ("__custom__", "__back__")]
             if "__custom__" in selected:
                 custom = console.input("[dim]Custom dataset name: [/]").strip()
                 if custom:
@@ -479,10 +504,16 @@ def prompt_dataset(console: Console):
         console.print(f"[dim]Drop .json or .jsonl files in {DATA_DIR}[/]")
         console.print("[dim]Format: [{instruction: ..., output: ...}, ...] for alpaca, or [{messages: [...]}] for sharegpt[/]")
         console.print()
-        dataset = console.input("[dim]Or enter a dataset name/path manually (Enter to go back): [/]").strip()
+        if allow_back:
+            console.print("[dim]Enter a dataset name/path, type 'back' to go back, or press Enter to cancel.[/]")
+        dataset = console.input("[dim]Dataset name/path: [/]").strip()
+        if allow_back and dataset.lower() in ("back", "b"):
+            return "__back__"
         return dataset if dataset else None
 
     choices = []
+    if allow_back:
+        choices.append(questionary.Choice(title="← Back", value="__back__"))
     for d in datasets:
         cnt = _count_dataset(d["name"])
         tag = "[auto]" if d["source"] == "auto" else ""
@@ -510,10 +541,12 @@ def prompt_dataset(console: Console):
 
     if selected is None:
         return None
+    if "__back__" in (selected or []):
+        return "__back__"
     if isinstance(selected, list) and len(selected) == 0:
         console.print("[yellow]No dataset selected. Press Space on a dataset to select it, then Enter to confirm.[/]")
         return None
-    filtered = [s for s in selected if s != "__custom__"]
+    filtered = [s for s in selected if s not in ("__custom__", "__back__")]
     if "__custom__" in selected:
         custom = console.input("[dim]Custom dataset name: [/]").strip()
         if custom:
@@ -521,11 +554,14 @@ def prompt_dataset(console: Console):
     return ",".join(filtered) if filtered else None
 
 
-def prompt_stage(console: Console):
+def prompt_stage(console: Console, allow_back: bool = False):
+    choices = list(STAGES)
+    if allow_back:
+        choices.insert(0, questionary.Choice(title="← Back", value="__back__"))
     try:
-        return questionary.select(
+        selected = questionary.select(
             "Training stage:",
-            choices=STAGES,
+            choices=choices,
             pointer=">",
             use_arrow_keys=True,
             use_jk_keys=True,
@@ -533,13 +569,17 @@ def prompt_stage(console: Console):
         ).ask()
     except (KeyboardInterrupt, EOFError):
         return None
+    return selected
 
 
-def prompt_finetuning_type(console: Console):
+def prompt_finetuning_type(console: Console, allow_back: bool = False):
+    choices = list(FINETUNING_TYPES)
+    if allow_back:
+        choices.insert(0, questionary.Choice(title="← Back", value="__back__"))
     try:
-        return questionary.select(
+        selected = questionary.select(
             "Fine-tuning method:",
-            choices=FINETUNING_TYPES,
+            choices=choices,
             pointer=">",
             use_arrow_keys=True,
             use_jk_keys=True,
@@ -547,44 +587,70 @@ def prompt_finetuning_type(console: Console):
         ).ask()
     except (KeyboardInterrupt, EOFError):
         return None
+    return selected
 
 
-def prompt_training_params(console: Console, finetuning_type):
+def prompt_training_params(console: Console, finetuning_type, allow_back: bool = False):
     params = {}
 
     if finetuning_type == "lora":
+        lora_choices = [
+            questionary.Choice("4  - Smaller adapter, less VRAM", value=4),
+            questionary.Choice("8  - Balanced (recommended)", value=8),
+            questionary.Choice("16 - More capacity, more VRAM", value=16),
+        ]
+        if allow_back:
+            lora_choices.insert(0, questionary.Choice(title="← Back", value="__back__"))
         try:
-            choice_4 = questionary.Choice("4  - Smaller adapter, less VRAM", value=4)
-            choice_8 = questionary.Choice("8  - Balanced (recommended)", value=8)
-            choice_16 = questionary.Choice("16 - More capacity, more VRAM", value=16)
             rank = questionary.select(
                 "LoRA rank:",
-                choices=[choice_4, choice_8, choice_16],
-                default=choice_8,
+                choices=lora_choices,
+                default=lora_choices[1] if allow_back and len(lora_choices) > 1 else lora_choices[0],
                 pointer=">",
                 use_arrow_keys=True,
             ).ask()
         except (KeyboardInterrupt, EOFError):
             return None
+        if rank == "__back__":
+            return "__back__"
         params["lora_rank"] = rank if rank else 8
-        params["lora_dropout"] = _input_float(console, "LoRA dropout", 0.05)
-        params["lora_alpha"] = _input_int(console, "LoRA alpha (0 = auto)", 0)
+        params["lora_dropout"] = _input_float(console, "LoRA dropout", 0.05, allow_back=allow_back)
+        if params["lora_dropout"] == "__back__":
+            return "__back__"
+        params["lora_alpha"] = _input_int(console, "LoRA alpha (0 = auto)", 0, allow_back=allow_back)
+        if params["lora_alpha"] == "__back__":
+            return "__back__"
 
-    try:
-        params["epochs"] = _input_float(console, "Number of epochs", 3.0)
-        params["learning_rate"] = _input_float(console, "Learning rate", 1e-4)
-        params["batch_size"] = _input_int(console, "Batch size per device", 2)
-        params["grad_accum"] = _input_int(console, "Gradient accumulation steps", 8)
-        params["cutoff_len"] = _input_int(console, "Cutoff length (tokens)", 512)
-    except (KeyboardInterrupt, EOFError):
-        return None
+    params["epochs"] = _input_float(console, "Number of epochs", 3.0, allow_back=allow_back)
+    if params["epochs"] == "__back__":
+        return "__back__"
+    params["learning_rate"] = _input_float(console, "Learning rate", 1e-4, allow_back=allow_back)
+    if params["learning_rate"] == "__back__":
+        return "__back__"
+    params["batch_size"] = _input_int(console, "Batch size per device", 2, allow_back=allow_back)
+    if params["batch_size"] == "__back__":
+        return "__back__"
+    params["grad_accum"] = _input_int(console, "Gradient accumulation steps", 8, allow_back=allow_back)
+    if params["grad_accum"] == "__back__":
+        return "__back__"
+    params["cutoff_len"] = _input_int(console, "Cutoff length (tokens)", 512, allow_back=allow_back)
+    if params["cutoff_len"] == "__back__":
+        return "__back__"
 
-    params["warmup_ratio"] = _input_float(console, "Warmup ratio", 0.1)
+    params["warmup_ratio"] = _input_float(console, "Warmup ratio", 0.1, allow_back=allow_back)
+    if params["warmup_ratio"] == "__back__":
+        return "__back__"
     return params
 
 
-def _input_int(console, label, default):
-    val = console.input(f"[dim]{label} (default {default}): [/]").strip()
+def _input_int(console, label, default, allow_back: bool = False):
+    prompt_text = f"[dim]{label} (default {default}"
+    if allow_back:
+        prompt_text += ", or type 'back'"
+    prompt_text += f"): [/]"
+    val = console.input(prompt_text).strip()
+    if allow_back and val.lower() in ("back", "b"):
+        return "__back__"
     if not val:
         return default
     try:
@@ -594,8 +660,14 @@ def _input_int(console, label, default):
         return default
 
 
-def _input_float(console, label, default):
-    val = console.input(f"[dim]{label} (default {default}): [/]").strip()
+def _input_float(console, label, default, allow_back: bool = False):
+    prompt_text = f"[dim]{label} (default {default}"
+    if allow_back:
+        prompt_text += ", or type 'back'"
+    prompt_text += f"): [/]"
+    val = console.input(prompt_text).strip()
+    if allow_back and val.lower() in ("back", "b"):
+        return "__back__"
     if not val:
         return default
     try:
@@ -605,8 +677,14 @@ def _input_float(console, label, default):
         return default
 
 
-def prompt_target_loss(console: Console):
-    val = console.input("[dim]Target loss (optional, e.g. 0.9 1.0 2.5; Enter to skip): [/]").strip()
+def prompt_target_loss(console: Console, allow_back: bool = False):
+    prompt_text = "[dim]Target loss (optional, e.g. 0.9 1.0 2.5"
+    if allow_back:
+        prompt_text += ", or type 'back'"
+    prompt_text += "; Enter to skip): [/]"
+    val = console.input(prompt_text).strip()
+    if allow_back and val.lower() in ("back", "b"):
+        return "__back__"
     if not val:
         return None
     try:
@@ -620,7 +698,7 @@ def prompt_target_loss(console: Console):
         return None
 
 
-def prompt_chat_model(console: Console):
+def prompt_chat_model(console: Console, allow_back: bool = False):
     models = _list_cached_models()
     adapter_map = {}
     if os.path.isdir(SAVES_DIR):
@@ -650,13 +728,19 @@ def prompt_chat_model(console: Console):
         console.print("[yellow]No models cached locally.[/]")
         console.print("[dim]Use 'Download Model' from the main menu to download one from HuggingFace.[/]")
         console.print()
+        if allow_back:
+            console.print("[dim]Enter a model ID, type 'back' to go back, or press Enter to cancel.[/]")
         path = console.input("[dim]Or enter a HuggingFace model ID (e.g. Qwen/Qwen3-0.6B): [/]").strip()
+        if allow_back and path.lower() in ("back", "b"):
+            return "__back__", None, None
         if not path:
             return None, None, None
         template = detect_template(path)
         return path, None, template
 
     choices = []
+    if allow_back:
+        choices.append(questionary.Choice(title="← Back", value="__back__"))
     for m in models:
         choices.append(questionary.Choice(
             title=f"{m['repo_id']} (base, no adapter)",
@@ -679,14 +763,17 @@ def prompt_chat_model(console: Console):
         result = questionary.select(
             "Select model to chat with:",
             choices=choices,
+            default=choices[1] if allow_back and len(choices) > 1 else choices[0] if choices else None,
             pointer=">",
             use_arrow_keys=True,
             use_jk_keys=True,
             instruction="(j/k to move, Enter to select)",
         ).ask()
     except (KeyboardInterrupt, EOFError):
-        return None, None, None
+        return ("__back__", None, None) if allow_back else (None, None, None)
 
+    if result == "__back__":
+        return "__back__", None, None
     if not result:
         return None, None, None
 
