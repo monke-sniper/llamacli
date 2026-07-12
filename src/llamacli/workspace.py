@@ -96,11 +96,64 @@ You can manually edit these YAMLs to customize training.
 The configs are modular - each run has its own file.
 
 ## CLI Commands
-    llamacli              # interactive menu
-    llamacli --version    # show version
-    llamacli --help       # show help
+
+### Interactive
+    llamacli                              # launch interactive menu
+    llamacli --version                    # show version
+    llamacli --help                       # show all commands
+
+### Training
     llamacli train --model X --dataset Y  # direct training
-    llamacli setup        # run setup/health check
+    llamacli train --model X --dataset Y --dry-run    # print config, don't train
+    llamacli train --model X --dataset Y --resume /path/to/checkpoint
+    llamacli train --model X --dataset Y --method lora --grad-accum 8
+    llamacli train --model X --dataset Y --scheduler cosine --warmup 0.1
+    llamacli train --model X --dataset Y --force          # overwrite output dir
+    llamacli train --model X --dataset Y --push-to-hub    # upload after training
+
+### Chat
+    llamacli chat                         # interactive chat with active model
+    llamacli chat --model X --message "Hello"          # single-shot response
+    llamacli chat --model X --adapter Y --message "Hi"   # chat with adapter
+
+### Export
+    llamacli export --adapter saves/run/lora           # merge adapter
+    llamacli export --adapter saves/run/lora --output models/my_model
+
+### Download
+    llamacli download model Qwen/Qwen3-0.6B             # download a model
+    llamacli download dataset tatsu-lab/alpaca          # download a dataset
+    llamacli download model Qwen/Qwen3-0.6B --no-confirm # skip confirmation
+
+### List
+    llamacli list models                  # list cached models
+    llamacli list datasets                # list available datasets
+    llamacli list history                 # list training runs
+    llamacli list adapters                # list LoRA adapters
+    llamacli list models --json           # output as JSON
+
+### Add Dataset
+    llamacli add dataset --name my_data --file my_data.json --format alpaca
+    llamacli add dataset --name my_data --hf-url https://huggingface.co/datasets/... --format sharegpt
+
+### Workspace
+    llamacli info                         # show workspace info and disk usage
+    llamacli info --json                    # output as JSON
+    llamacli doctor                       # full system diagnostic
+    llamacli doctor --fix                 # auto-fix missing dependencies
+    llamacli clean configs                # delete old config files
+    llamacli clean all --force            # delete everything (no confirmation)
+
+### Maintenance
+    llamacli setup                        # run setup/health check
+    llamacli update                       # self-update via pip
+    llamacli update --check               # check for updates only
+
+### Global Flags
+    llamacli --workspace /path/to/custom  # override workspace directory
+    llamacli --no-color                   # disable colored output
+    llamacli --quiet                      # suppress non-essential output
+    llamacli --verbose                    # verbose/debug output
 
 ## Environment Variables
     LLAMACLII_WORKSPACE   # override workspace location

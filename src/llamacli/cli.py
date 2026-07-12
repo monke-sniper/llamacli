@@ -1,6 +1,8 @@
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 from datetime import datetime
 
@@ -8,6 +10,7 @@ import questionary
 import typer
 import yaml
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 from . import (
@@ -17,9 +20,10 @@ from . import (
     DATASET_INFO,
     DATA_DIR,
     MODELS_DIR,
+    PROJECT_ROOT,
     SAVES_DIR,
 )
-from .hf import download_model_interactive, download_dataset_interactive
+from .hf import download_model, download_dataset, download_model_interactive, download_dataset_interactive
 from .bootstrap import run_bootstrap
 from .logo import print_logo
 from .repro import gather_repro_metadata, format_repro_header
@@ -46,6 +50,9 @@ console = Console(
     file=io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace"),
     force_terminal=True,
 )
+
+_quiet = False
+_verbose = False
 
 MAIN_MENU = [
     questionary.Choice(title="  Quick Train", value="quick_train"),
@@ -832,7 +839,31 @@ def interactive_loop():
 def main(
     ctx: typer.Context,
     version: bool = typer.Option(False, "--version", "-v", help="Show version"),
+    workspace: str = typer.Option(None, "--workspace", help="Override workspace directory"),
+    no_color: bool = typer.Option(False, "--no-color", help="Disable colored output"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress non-essential output"),
+    verbose: bool = typer.Option(False, "--verbose", "--debug", help="Verbose output"),
 ):
+    global console, _quiet, _verbose
+
+    _quiet = quiet
+    _verbose = verbose
+
+    if workspace:
+        os.environ["LLAMACLII_WORKSPACE"] = workspace
+        # Re-init module constants for this process without persisting to global config
+        import importlib
+        import llamacli as _pkg
+        importlib.reload(_pkg)
+
+    if no_color:
+        # Disable colors on the existing console without recreation
+        # to avoid file descriptor issues on Windows with PIPE stdout.
+        try:
+            console._color_system = None
+        except Exception:
+            pass
+
     from .workspace import sync_demo_datasets
     sync_demo_datasets(
         BUNDLED_DATA_DIR,
@@ -880,6 +911,14 @@ def train(
     lora_rank: int = typer.Option(8, "--lora-rank", help="LoRA rank"),
     output: str = typer.Option("", "--output", "-o", help="Output name"),
     template: str = typer.Option("qwen3", "--template", "-t", help="Template"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print config YAML and exit without training"),
+    resume: str = typer.Option(None, "--resume", help="Resume training from checkpoint path"),
+    push_to_hub: bool = typer.Option(False, "--push-to-hub", help="Push merged model to HuggingFace Hub after training"),
+    force: bool = typer.Option(False, "--force", help="Overwrite output directory without asking"),
+    grad_accum: int = typer.Option(8, "--grad-accum", help="Gradient accumulation steps"),
+    warmup: float = typer.Option(0.1, "--warmup", help="Warmup ratio"),
+    scheduler: str = typer.Option("cosine", "--scheduler", help="LR scheduler type (cosine/linear/constant)"),
+    method: str = typer.Option("lora", "--method", help="Finetuning method: lora/full/freeze"),
 ):
     output_name = output or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     config = {
@@ -887,7 +926,7 @@ def train(
         "trust_remote_code": True,
         "stage": stage,
         "do_train": True,
-        "finetuning_type": "lora",
+        "finetuning_type": method,
         "lora_rank": lora_rank,
         "lora_dropout": 0.05,
         "lora_target": "all",
@@ -904,24 +943,606 @@ def train(
         "overwrite_output_dir": True,
         "report_to": "none",
         "per_device_train_batch_size": batch,
-        "gradient_accumulation_steps": 8,
+        "gradient_accumulation_steps": grad_accum,
         "learning_rate": lr,
         "num_train_epochs": epochs,
-        "lr_scheduler_type": "cosine",
-        "warmup_ratio": 0.1,
+        "lr_scheduler_type": scheduler,
+        "warmup_ratio": warmup,
         **_compute_dtype_flags(),
     }
+    if resume:
+        config["resume_from_checkpoint"] = resume
+    if force:
+        config["overwrite_output_dir"] = True
+
+    # Record method-specific info
+    extra_args = {
+        "model": model, "dataset": dataset, "stage": stage, "epochs": epochs,
+        "lr": lr, "batch": batch, "cutoff": cutoff, "lora_rank": lora_rank,
+        "method": method, "grad_accum": grad_accum, "scheduler": scheduler,
+        "warmup": warmup,
+    }
+
+    if dry_run:
+        import yaml
+        console.print("[bold]Dry run — config that would be used:[/bold]")
+        console.print("─" * 50)
+        console.print(yaml.dump(config, default_flow_style=False, allow_unicode=True))
+        console.print("─" * 50)
+        raise typer.Exit(0)
+
     success = _write_config_and_train(
         console, config, output_name,
         command="train",
-        model=model, dataset=dataset, stage=stage, epochs=epochs,
-        lr=lr, batch=batch, cutoff=cutoff, lora_rank=lora_rank,
+        **extra_args,
     )
     if success:
         console.print(f"\n[green]Training complete![/]")
         _record_training(output_name, model, dataset, stage, epochs, template)
+        if push_to_hub:
+            _push_to_hub(console, config["output_dir"])
     else:
         raise typer.Exit(1)
+
+
+def _push_to_hub(console: Console, adapter_path: str):
+    from .hf import _check_hf
+    if not _check_hf(console):
+        console.print("[yellow]Skipping push to Hub — huggingface_hub not available[/]")
+        return
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi()
+        repo_id = input("HuggingFace repo ID to push to (org/name): ").strip()
+        if not repo_id:
+            console.print("[yellow]No repo ID provided. Skipping push.[/]")
+            return
+        console.print(f"[dim]Pushing {adapter_path} to {repo_id}...[/]")
+        from huggingface_hub import upload_folder
+        upload_folder(repo_id=repo_id, folder_path=adapter_path)
+        console.print(f"[green]Pushed to https://huggingface.co/{repo_id}[/]")
+    except Exception as e:
+        console.print(f"[red]Push to Hub failed: {e}[/]")
+
+
+@app.command()
+def chat(
+    model: str = typer.Option(None, "--model", "-m", help="Model path (defaults to active_model in state)"),
+    adapter: str = typer.Option(None, "--adapter", "-a", help="Adapter path"),
+    template: str = typer.Option(None, "--template", "-t", help="Chat template"),
+    message: str = typer.Option(None, "--message", help="Single message: non-interactive mode"),
+    max_tokens: int = typer.Option(512, "--max-tokens", help="Max generation tokens"),
+):
+    """Chat with a model. Interactive by default, or single-shot with --message."""
+    state = get_state()
+    model_path = model or state.active_model or "Qwen/Qwen3-0.6B"
+    adapter_path = adapter or state.active_adapter
+    template_name = template or state.active_template or detect_template(model_path)
+
+    try:
+        from llamafactory.chat import ChatModel
+    except ImportError:
+        console.print("[red]llamafactory not installed. Run: llamacli setup[/]")
+        raise typer.Exit(1)
+
+    config = {
+        "model_name_or_path": model_path,
+        "template": template_name,
+        "trust_remote_code": True,
+    }
+    if adapter_path:
+        config["adapter_name_or_path"] = adapter_path
+        config["finetuning_type"] = "lora"
+    config["max_tokens"] = max_tokens
+
+    console.print(f"[dim]Loading model: {model_path}[/dim]")
+    try:
+        chat_model = ChatModel(config)
+    except Exception as e:
+        console.print(f"[red]Failed to load model: {e}[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Model loaded![/] Template: {template_name}")
+    if adapter_path:
+        console.print(f"[green]Adapter:[/] {adapter_path}")
+
+    if message:
+        # Single-shot mode
+        messages = [{"role": "user", "content": message}]
+        console.print(f"\n[bold cyan]You:[/] {message}\n")
+        console.print(f"[bold green]Assistant:[/] ", end="")
+        try:
+            response = ""
+            for token in chat_model.stream_chat(messages):
+                response += token
+                console.print(token, end="")
+            console.print()
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/]")
+            raise typer.Exit(1)
+        return
+
+    # Interactive mode
+    messages = []
+    console.print("[dim]Type /quit or /exit to quit. /clear to start a new chat.[/]\n")
+    while True:
+        try:
+            text = console.input("[bold cyan]You:[/] ").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]Goodbye![/]")
+            break
+        if not text:
+            continue
+        if text in ("/quit", "/exit"):
+            console.print("[dim]Goodbye![/]")
+            break
+        if text == "/clear":
+            messages = []
+            console.print("[dim]Chat cleared.[/]\n")
+            continue
+
+        messages.append({"role": "user", "content": text})
+        try:
+            response = ""
+            console.print(f"[bold green]Assistant:[/] ", end="")
+            for token in chat_model.stream_chat(messages):
+                response += token
+                console.print(token, end="")
+            console.print()
+            messages.append({"role": "assistant", "content": response})
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/]")
+
+
+@app.command()
+def export(
+    adapter: str = typer.Option(..., "--adapter", "-a", help="Adapter path to export"),
+    model: str = typer.Option(None, "--model", "-m", help="Base model (defaults to active_model)"),
+    output: str = typer.Option(None, "--output", "-o", help="Export destination directory"),
+    template: str = typer.Option(None, "--template", "-t", help="Chat template"),
+    size: int = typer.Option(2, "--size", help="Shard size in GB"),
+):
+    """Merge a LoRA adapter into a standalone model."""
+    state = get_state()
+    model_path = model or state.active_model or "Qwen/Qwen3-0.6B"
+    template_name = template or state.active_template or detect_template(model_path)
+    dest = output or os.path.join(
+        "models",
+        os.path.basename(adapter.rstrip("/\\").replace("/lora", "").replace("\\lora", "")),
+    )
+
+    config = {
+        "model_name_or_path": model_path,
+        "adapter_name_or_path": adapter,
+        "template": template_name,
+        "finetuning_type": "lora",
+        "export_dir": dest,
+        "export_size": size,
+        "export_legacy_format": False,
+    }
+
+    os.makedirs(CONFIGS_DIR, exist_ok=True)
+    config_path = os.path.join(CONFIGS_DIR, "llamacli_export_temp.yaml")
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+
+    run_export(console, config_path)
+
+
+@app.command()
+def download(
+    type: str = typer.Argument(..., help="Type to download: model or dataset"),
+    name: str = typer.Argument(..., help="HuggingFace repo ID"),
+    no_confirm: bool = typer.Option(False, "--no-confirm", help="Skip confirmation prompt"),
+):
+    """Download a model or dataset from HuggingFace."""
+    type_lower = type.lower()
+    if type_lower not in ("model", "dataset"):
+        console.print(f"[red]Invalid type '{type}'. Must be 'model' or 'dataset'.[/]")
+        raise typer.Exit(1)
+
+    if type_lower == "model":
+        if no_confirm:
+            # Bypass interactive confirmation by calling snapshot_download directly
+            console.print(f"[dim]Downloading model {name}...[/]")
+            try:
+                from huggingface_hub import snapshot_download
+                path = snapshot_download(name)
+                console.print(f"[green]Downloaded to: {path}[/]")
+            except Exception as e:
+                console.print(f"[red]Download failed: {e}[/]")
+                raise typer.Exit(1)
+        else:
+            path = download_model(console, name)
+            if path:
+                console.print("[dim]The model will appear in the model list next time.[/]")
+    else:
+        if no_confirm:
+            console.print(f"[dim]Downloading dataset {name}...[/]")
+            try:
+                from huggingface_hub import snapshot_download
+                safe_name = name.replace("/", "_")
+                local_dir = os.path.join(DATA_DIR, safe_name)
+                path = snapshot_download(name, repo_type="dataset", local_dir=local_dir)
+                console.print(f"[green]Dataset downloaded to: {path}[/]")
+            except Exception as e:
+                console.print(f"[red]Download failed: {e}[/]")
+                raise typer.Exit(1)
+        else:
+            safe_name = name.replace("/", "_")
+            local_dir = os.path.join(DATA_DIR, safe_name)
+            path = download_dataset(console, name, local_dir)
+            if path:
+                # Auto-register
+                from .hf import _register_downloaded_dataset
+                _register_downloaded_dataset(console, name, safe_name, path)
+
+
+@app.command()
+def list(
+    what: str = typer.Argument("models", help="What to list: models, datasets, history, adapters"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """List cached models, datasets, training history, or adapters."""
+    what_lower = what.lower()
+
+    if what_lower == "models":
+        models = _list_cached_models()
+        if json_output:
+            print(json.dumps(models, indent=2, ensure_ascii=False))
+            return
+        if not models:
+            console.print("[dim]No cached models found.[/]")
+            return
+        table = Table(show_header=True, header_style="bold white", border_style="white")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Model", style="white")
+        table.add_column("Size", style="dim", width=12)
+        table.add_column("Type", style="dim", width=12)
+        for i, m in enumerate(models, 1):
+            table.add_row(str(i), m["repo_id"], f"{m['size_gb']:.1f} GB", m.get("model_type", "?"))
+        console.print(table)
+
+    elif what_lower == "datasets":
+        datasets = _list_datasets()
+        if json_output:
+            print(json.dumps(datasets, indent=2, ensure_ascii=False))
+            return
+        if not datasets:
+            console.print("[dim]No datasets found.[/]")
+            return
+        table = Table(show_header=True, header_style="bold white", border_style="white")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Dataset", style="white")
+        table.add_column("Examples", style="dim", width=10)
+        table.add_column("Format", style="dim", width=10)
+        table.add_column("Source", style="dim", width=12)
+        for i, d in enumerate(datasets, 1):
+            cnt = _count_dataset(d["name"])
+            table.add_row(str(i), d["name"], str(cnt), d["format"], d.get("source", "-"))
+        console.print(table)
+
+    elif what_lower == "history":
+        state = get_state()
+        history = state.training_history
+        if json_output:
+            print(json.dumps(history, indent=2, ensure_ascii=False))
+            return
+        if not history:
+            console.print("[dim]No training history.[/]")
+            return
+        table = Table(show_header=True, header_style="bold white", border_style="white")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Run", style="white")
+        table.add_column("Model", style="dim")
+        table.add_column("Dataset", style="dim")
+        table.add_column("Stage", style="dim", width=8)
+        table.add_column("Epochs", style="dim", width=8)
+        for i, h in enumerate(history, 1):
+            table.add_row(
+                str(i),
+                h.get("output_name", "?"),
+                h.get("model", "?"),
+                h.get("dataset", "?"),
+                h.get("stage", "?"),
+                str(h.get("epochs", "?")),
+            )
+        console.print(table)
+
+    elif what_lower == "adapters":
+        adapters = []
+        if os.path.isdir(SAVES_DIR):
+            for root, dirs, files in os.walk(SAVES_DIR):
+                if "adapter_config.json" in files:
+                    rel = os.path.relpath(root, SAVES_DIR)
+                    adapters.append({"path": rel, "full_path": root})
+        if json_output:
+            print(json.dumps(adapters, indent=2, ensure_ascii=False))
+            return
+        if not adapters:
+            console.print("[dim]No adapters found.[/]")
+            return
+        table = Table(show_header=True, header_style="bold white", border_style="white")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Adapter", style="white")
+        table.add_column("Full Path", style="dim")
+        for i, a in enumerate(adapters, 1):
+            table.add_row(str(i), a["path"], a["full_path"])
+        console.print(table)
+
+    else:
+        console.print(f"[red]Unknown list type: {what}. Use models/datasets/history/adapters.[/]")
+        raise typer.Exit(1)
+
+
+@app.command("add")
+def add_dataset(
+    name: str = typer.Option(..., "--name", help="Dataset name (used in configs)"),
+    file: str = typer.Option(None, "--file", help="Local filename in data/"),
+    hf_url: str = typer.Option(None, "--hf-url", help="HuggingFace dataset URL"),
+    format: str = typer.Option("alpaca", "--format", help="Format: alpaca or sharegpt"),
+):
+    """Register a dataset (local file or HuggingFace URL)."""
+    if file and hf_url:
+        console.print("[red]Cannot specify both --file and --hf-url.[/]")
+        raise typer.Exit(1)
+    if not file and not hf_url:
+        console.print("[red]Must specify --file or --hf-url.[/]")
+        raise typer.Exit(1)
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+    registry = {}
+    if os.path.isfile(DATASET_INFO):
+        try:
+            with open(DATASET_INFO, "r", encoding="utf-8") as f:
+                registry = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if file:
+        entry = {"file_name": file, "formatting": format}
+    else:
+        entry = {"hf_hub_url": hf_url, "formatting": format}
+
+    registry[name] = entry
+    with open(DATASET_INFO, "w", encoding="utf-8") as f:
+        json.dump(registry, f, indent=2, ensure_ascii=False)
+    console.print(f"[green]Dataset '{name}' added to dataset_info.json[/]")
+
+
+@app.command()
+def info(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+):
+    """Show workspace info, active model/dataset, and directory sizes."""
+    state = get_state()
+    dirs_info = {}
+    for label, path in [
+        ("data", DATA_DIR),
+        ("saves", SAVES_DIR),
+        ("models", MODELS_DIR),
+        ("configs", CONFIGS_DIR),
+    ]:
+        count = 0
+        size = 0
+        if os.path.isdir(path):
+            for root, dirs, files in os.walk(path):
+                for f in files:
+                    fp = os.path.join(root, f)
+                    count += 1
+                    try:
+                        size += os.path.getsize(fp)
+                    except OSError:
+                        pass
+        dirs_info[label] = {"files": count, "size": size}
+
+    info_data = {
+        "workspace": PROJECT_ROOT,
+        "active_model": state.active_model,
+        "active_adapter": state.active_adapter,
+        "active_template": state.active_template,
+        "active_dataset": state.active_dataset,
+        "directories": dirs_info,
+    }
+
+    if json_output:
+        # Use plain print for JSON to avoid Rich syntax-highlighting escape codes
+        print(json.dumps(info_data, indent=2, ensure_ascii=False))
+        return
+
+    panel_content = (
+        f"[bold]Workspace:[/] {PROJECT_ROOT}\n"
+        f"[bold]Active Model:[/] {state.active_model or '(none)'}\n"
+        f"[bold]Active Adapter:[/] {state.active_adapter or '(none)'}\n"
+        f"[bold]Active Template:[/] {state.active_template}\n"
+        f"[bold]Active Dataset:[/] {state.active_dataset or '(none)'}\n"
+    )
+    console.print(Panel(panel_content, title="[bold]llamacli Info[/bold]", border_style="white"))
+
+    table = Table(show_header=True, header_style="bold white", border_style="white")
+    table.add_column("Directory", style="white")
+    table.add_column("Files", style="dim", width=8)
+    table.add_column("Size", style="dim", width=12)
+    for label, info in dirs_info.items():
+        size = info["size"]
+        size_str = f"{size / (1024**3):.2f} GB" if size >= 1024**3 else f"{size / (1024**2):.1f} MB" if size >= 1024**2 else f"{size} B"
+        table.add_row(f"{label}/", str(info["files"]), size_str)
+    console.print(table)
+
+
+@app.command()
+def doctor(
+    fix: bool = typer.Option(False, "--fix", help="Auto-install missing dependencies"),
+):
+    """Run a full system diagnostic (like brew doctor)."""
+    from . import PROJECT_ROOT
+    console.print("\n[bold white]llamacli Doctor[/bold white]\n")
+
+    # Use bootstrap for core checks
+    ok = run_bootstrap(console, force=fix)
+
+    # Extra checks
+    extra_table = Table(show_header=True, header_style="bold white", border_style="white")
+    extra_table.add_column("Extra Check", style="white")
+    extra_table.add_column("Status", width=12)
+    extra_table.add_column("Details", style="dim")
+
+    # Disk space
+    try:
+        total, used, free = shutil.disk_usage(PROJECT_ROOT)
+        free_gb = free / (1024**3)
+        ds_ok = free_gb > 1
+        extra_table.add_row(
+            "Disk space",
+            "[green]OK[/]" if ds_ok else "[yellow]LOW[/]",
+            f"{free_gb:.1f} GB free",
+        )
+    except Exception as e:
+        extra_table.add_row("Disk space", "[yellow]WARN[/]", str(e))
+
+    # State file corruption check
+    state_ok = True
+    state_msg = "valid"
+    from . import STATE_PATH
+    if os.path.isfile(STATE_PATH):
+        try:
+            with open(STATE_PATH, "r", encoding="utf-8") as f:
+                yaml.safe_load(f)
+        except Exception as e:
+            state_ok = False
+            state_msg = f"corrupted: {e}"
+    else:
+        state_msg = "missing (will be created)"
+    extra_table.add_row(
+        "State file",
+        "[green]OK[/]" if state_ok else "[red]FAIL[/]",
+        state_msg,
+    )
+
+    # Dataset registry check
+    ds_reg_ok = True
+    ds_reg_msg = "valid"
+    if os.path.isfile(DATASET_INFO):
+        try:
+            with open(DATASET_INFO, "r", encoding="utf-8") as f:
+                json.load(f)
+        except Exception as e:
+            ds_reg_ok = False
+            ds_reg_msg = f"corrupted: {e}"
+    else:
+        ds_reg_msg = "missing (will be created)"
+    extra_table.add_row(
+        "Dataset registry",
+        "[green]OK[/]" if ds_reg_ok else "[red]FAIL[/]",
+        ds_reg_msg,
+    )
+
+    console.print(extra_table)
+
+    if ok and state_ok and ds_reg_ok:
+        console.print("\n[green]All diagnostics passed![/]")
+    else:
+        console.print("\n[yellow]Some issues found. Run with --fix to auto-repair.[/]")
+
+
+@app.command()
+def update(
+    check: bool = typer.Option(False, "--check", help="Only check for updates, don't install"),
+):
+    """Self-update via pip install --upgrade."""
+    console.print("[bold]llamacli Update[/bold]\n")
+
+    # Use current interpreter's pip (works for venvs and system python)
+    args_prefix = [sys.executable, "-m", "pip"]
+
+    # Check latest version
+    try:
+        result = subprocess.run(
+            args_prefix + ["index", "versions", "llamacli"],
+            capture_output=True, text=True, timeout=30,
+        )
+        latest = None
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if "LATEST" in line or "Available" in line:
+                    latest = line.strip().split()[-1]
+                    break
+    except Exception:
+        latest = None
+
+    if check:
+        from . import PROJECT_ROOT
+        console.print(f"[bold]Current:[/] {PROJECT_ROOT}")
+        if latest:
+            console.print(f"[bold]Latest available:[/] {latest}")
+        else:
+            console.print("[dim]Could not check latest version.[/]")
+        return
+
+    console.print("[dim]Installing latest version...[/]")
+    try:
+        result = subprocess.run(
+            args_prefix + ["install", "--upgrade", "llamacli"],
+            capture_output=False, text=True, timeout=300,
+        )
+        if result.returncode == 0:
+            console.print("\n[green]llamacli updated successfully![/]")
+        else:
+            console.print("\n[red]Update failed.[/]")
+            raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"\n[red]Update error: {e}[/]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def clean(
+    what: str = typer.Argument("all", help="What to clean: configs, cache, saves, all"),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+):
+    """Clean up workspace: remove old configs, cache files, or saves."""
+    what_lower = what.lower()
+    valid = ("configs", "cache", "saves", "all")
+    if what_lower not in valid:
+        console.print(f"[red]Invalid target '{what}'. Use: configs, cache, saves, all.[/]")
+        raise typer.Exit(1)
+
+    targets = []
+    if what_lower in ("configs", "all"):
+        targets.append(("configs", CONFIGS_DIR))
+    if what_lower == "cache":
+        # HF cache
+        from . import HF_CACHE
+        targets.append(("HF cache", HF_CACHE))
+    if what_lower in ("saves", "all"):
+        targets.append(("saves", SAVES_DIR))
+
+    if not targets:
+        console.print("[dim]Nothing to clean.[/]")
+        return
+
+    if not force:
+        console.print(f"[yellow]Will delete:[/]")
+        for label, path in targets:
+            console.print(f"  {label}: {path}")
+        try:
+            ans = input("Proceed? (y/n): ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            console.print("[dim]Cancelled.[/]")
+            return
+        if ans != "y":
+            console.print("[dim]Cancelled.[/]")
+            return
+
+    for label, path in targets:
+        if os.path.isdir(path):
+            try:
+                shutil.rmtree(path)
+                console.print(f"[green]Deleted {label}: {path}[/]")
+            except Exception as e:
+                console.print(f"[red]Failed to delete {label}: {e}[/]")
+        else:
+            console.print(f"[dim]{label} not found: {path}[/]")
 
 
 def entry():
