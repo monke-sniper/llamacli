@@ -20,6 +20,8 @@ env/
 # phronis runtime
 .phronis.yaml
 data/README.txt
+data/*.json
+data/*.jsonl
 
 # OS
 .DS_Store
