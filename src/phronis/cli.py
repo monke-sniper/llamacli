@@ -1548,7 +1548,11 @@ def add_dataset(
     hf_url: str = typer.Option(None, "--hf-url", help="HuggingFace dataset URL"),
     format: str = typer.Option("alpaca", "--format", help="Format: alpaca or sharegpt"),
 ) -> None:
-    """Register a dataset (local file or HuggingFace URL)."""
+    """Register a dataset (local file or HuggingFace URL).
+
+    For sharegpt datasets, the actual JSON key ('messages' or 'conversations')
+    is auto-detected so LLaMA-Factory reads the correct column.
+    """
     if file and hf_url:
         console.print("[red]Cannot specify both --file and --hf-url.[/]")
         raise typer.Exit(1)
@@ -1567,6 +1571,22 @@ def add_dataset(
 
     if file:
         entry = {"file_name": file, "formatting": format}
+        # Auto-detect sharegpt key from file content
+        if format == "sharegpt":
+            fpath = os.path.join(DATA_DIR, file)
+            if os.path.isfile(fpath):
+                try:
+                    with open(fpath, "r", encoding="utf-8-sig") as f:
+                        data = json.load(f)
+                    if isinstance(data, list) and len(data) > 0:
+                        first = data[0]
+                        if isinstance(first, dict):
+                            if "messages" in first:
+                                entry["columns"] = {"messages": "messages"}
+                            elif "conversations" in first:
+                                entry["columns"] = {"messages": "conversations"}
+                except Exception:
+                    pass
     else:
         entry = {"hf_hub_url": hf_url, "formatting": format}
 
@@ -1603,8 +1623,20 @@ def info(
                         pass
         dirs_info[label] = {"files": count, "size": size}
 
+    from .env_setup import _venv_dir
+
+    venv_dir = _venv_dir() if os.name == "nt" else None
+    if os.name == "nt":
+        from .env_setup import _venv_dir as _get_venv_dir
+        venv_dir = _get_venv_dir()
+    else:
+        venv_dir = None
+
     info_data = {
+        "repo_root": REPO_ROOT,
         "workspace": PROJECT_ROOT,
+        "state_file": STATE_PATH,
+        "dataset_registry": DATASET_INFO,
         "active_model": state.active_model,
         "active_adapter": state.active_adapter,
         "active_template": state.active_template,
@@ -1618,7 +1650,10 @@ def info(
         return
 
     panel_content = (
+        f"[bold]Repo Root:[/] {REPO_ROOT}\n"
         f"[bold]Workspace:[/] {PROJECT_ROOT}\n"
+        f"[bold]State File:[/] {STATE_PATH}\n"
+        f"[bold]Dataset Registry:[/] {DATASET_INFO}\n"
         f"[bold]Active Model:[/] {state.active_model or '(none)'}\n"
         f"[bold]Active Adapter:[/] {state.active_adapter or '(none)'}\n"
         f"[bold]Active Template:[/] {state.active_template}\n"
