@@ -184,23 +184,29 @@ def detect_template(repo_id):
 
 
 def _detect_format(data):
-    """Detect dataset format from data content."""
+    """Detect dataset format from data content.
+
+    Returns a tuple (format, columns) where:
+      - format is 'alpaca' or 'sharegpt'
+      - columns is None for alpaca, or {"messages": key_name} for sharegpt
+        (key_name is the actual JSON key used: 'messages' or 'conversations')
+    """
     if not isinstance(data, list) or len(data) == 0:
-        return None
+        return None, None
     first = data[0]
     if not isinstance(first, dict):
-        return None
+        return None, None
     if "instruction" in first and "output" in first:
-        return "alpaca"
+        return "alpaca", None
     if "messages" in first:
-        return "sharegpt"
+        return "sharegpt", {"messages": "messages"}
     if "conversations" in first:
-        return "sharegpt"
+        return "sharegpt", {"messages": "conversations"}
     if "prompt" in first and "completion" in first:
-        return "alpaca"
+        return "alpaca", None
     if "text" in first:
-        return "alpaca"
-    return None
+        return "alpaca", None
+    return None, None
 
 
 def _list_datasets():
@@ -232,7 +238,7 @@ def _list_datasets():
             try:
                 with open(fpath, "r", encoding="utf-8-sig") as f:
                     data = json.load(f)
-                fmt = _detect_format(data)
+                fmt, cols = _detect_format(data)
                 if fmt:
                     datasets[name] = {
                         "name": name,
@@ -254,7 +260,13 @@ def _list_datasets():
                                 "format": "alpaca",
                                 "source": "auto",
                             }
-                        elif "messages" in first or "conversations" in first:
+                        elif "messages" in first:
+                            datasets[name] = {
+                                "name": name,
+                                "format": "sharegpt",
+                                "source": "auto",
+                            }
+                        elif "conversations" in first:
                             datasets[name] = {
                                 "name": name,
                                 "format": "sharegpt",
@@ -333,7 +345,7 @@ def _list_demo_datasets():
             try:
                 with open(fpath, "r", encoding="utf-8-sig") as f:
                     data = json.load(f)
-                fmt = _detect_format(data)
+                fmt, cols = _detect_format(data)
                 if fmt:
                     datasets[name] = {"name": name, "format": fmt, "source": "demo"}
             except (json.JSONDecodeError, OSError):
@@ -347,7 +359,9 @@ def _list_demo_datasets():
                     if isinstance(first, dict):
                         if "instruction" in first and "output" in first:
                             datasets[name] = {"name": name, "format": "alpaca", "source": "demo"}
-                        elif "messages" in first or "conversations" in first:
+                        elif "messages" in first:
+                            datasets[name] = {"name": name, "format": "sharegpt", "source": "demo"}
+                        elif "conversations" in first:
                             datasets[name] = {"name": name, "format": "sharegpt", "source": "demo"}
             except (json.JSONDecodeError, OSError):
                 pass

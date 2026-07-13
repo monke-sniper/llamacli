@@ -427,6 +427,7 @@ def _register_downloaded_dataset(console: Console, dataset_id: str, safe_name: s
         return
 
     fmt = None
+    columns = None
     for jf in json_files:
         try:
             if jf.endswith(".jsonl"):
@@ -445,8 +446,13 @@ def _register_downloaded_dataset(console: Console, dataset_id: str, safe_name: s
                 if "instruction" in first and "output" in first:
                     fmt = "alpaca"
                     break
-                elif "messages" in first or "conversations" in first:
+                elif "messages" in first:
                     fmt = "sharegpt"
+                    columns = {"messages": "messages"}
+                    break
+                elif "conversations" in first:
+                    fmt = "sharegpt"
+                    columns = {"messages": "conversations"}
                     break
         except Exception:
             continue
@@ -455,6 +461,8 @@ def _register_downloaded_dataset(console: Console, dataset_id: str, safe_name: s
         fmt = "alpaca"
 
     entry = {"file_name": os.path.relpath(json_files[0], DATA_DIR), "formatting": fmt}
+    if columns:
+        entry["columns"] = columns
     os.makedirs(DATA_DIR, exist_ok=True)
     registry = {}
     if os.path.isfile(DATASET_INFO):

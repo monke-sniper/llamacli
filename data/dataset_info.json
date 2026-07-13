@@ -14,5 +14,13 @@
   "my_hf": {
     "hf_hub_url": "https://huggingface.co/datasets/test",
     "formatting": "sharegpt"
+  },
+  "chat_ds": {
+    "file_name": "chat_data.json",
+    "formatting": "sharegpt"
+  },
+  "alpaca_ds": {
+    "file_name": "alpaca_data.json",
+    "formatting": "alpaca"
   }
 }

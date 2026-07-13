@@ -5,6 +5,9 @@
   },
   "demo_chat": {
     "file_name": "demo_chat.json",
-    "formatting": "sharegpt"
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    }
   }
 }
