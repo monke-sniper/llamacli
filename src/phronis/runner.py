@@ -59,11 +59,15 @@ def _parse_metrics(raw_line):
     for match in re.finditer(r"\{[^}]+\}", raw_line):
         try:
             d = ast.literal_eval(match.group())
-            return {
-                k: v
-                for k, v in d.items()
-                if k in ("loss", "grad_norm", "learning_rate", "epoch")
-            }
+            parsed = {}
+            for k in ("loss", "grad_norm", "learning_rate", "epoch"):
+                v = d.get(k)
+                if v is not None:
+                    try:
+                        parsed[k] = float(v)
+                    except (ValueError, TypeError):
+                        pass  # skip non-numeric values
+            return parsed
         except (ValueError, SyntaxError):
             continue
     return None
