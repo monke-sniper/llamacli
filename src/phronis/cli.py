@@ -1711,17 +1711,21 @@ def doctor(
 @app.command()
 def update(
     check: bool = typer.Option(False, "--check", help="Only check for updates, don't install"),
+    force_pip: bool = typer.Option(False, "--force-pip", help="Force PyPI upgrade even if installed from source"),
 ) -> None:
-    """Self-update via pip install --upgrade."""
+    """Self-update phronis. Pulls latest source if installed from git, otherwise uses pip."""
+    from . import REPO_ROOT
+
     console.print("[bold]phronis Update[/bold]\n")
 
-    # Use current interpreter's pip (works for venvs and system python)
-    args_prefix = [sys.executable, "-m", "pip"]
+    is_source_install = os.path.isdir(os.path.join(REPO_ROOT, ".git"))
 
-    # Check latest version
+    pip_prefix = [sys.executable, "-m", "pip"]
+
+    # Try to fetch latest version info from PyPI
     try:
         result = subprocess.run(
-            args_prefix + ["index", "versions", "phronis"],
+            pip_prefix + ["index", "versions", "phronis"],
             capture_output=True, text=True, timeout=30,
         )
         latest = None
@@ -1734,28 +1738,61 @@ def update(
         latest = None
 
     if check:
-        from . import PROJECT_ROOT
-        console.print(f"[bold]Current:[/] {PROJECT_ROOT}")
+        console.print(f"[bold]Install path:[/] {REPO_ROOT}")
+        install_type = "source (git)" if is_source_install else "PyPI / package"
+        console.print(f"[bold]Install type:[/] {install_type}")
         if latest:
             console.print(f"[bold]Latest available:[/] {latest}")
         else:
-            console.print("[dim]Could not check latest version.[/]")
+            console.print("[dim]Could not check latest PyPI version.[/]")
         return
 
-    console.print("[dim]Installing latest version...[/]")
-    try:
-        result = subprocess.run(
-            args_prefix + ["install", "--upgrade", "phronis"],
-            capture_output=False, text=True, timeout=300,
-        )
-        if result.returncode == 0:
-            console.print("\n[green]phronis updated successfully![/]")
-        else:
-            console.print("\n[red]Update failed.[/]")
+    if is_source_install and not force_pip:
+        console.print("[dim]Source install detected. Pulling latest code...[/]")
+        try:
+            result = subprocess.run(
+                ["git", "-C", REPO_ROOT, "pull"],
+                capture_output=False, text=True, timeout=120,
+            )
+            if result.returncode != 0:
+                console.print("[red]Git pull failed.[/]")
+                raise typer.Exit(1)
+        except Exception as e:
+            console.print(f"[red]Git pull error: {e}[/]")
             raise typer.Exit(1)
-    except Exception as e:
-        console.print(f"\n[red]Update error: {e}[/]")
-        raise typer.Exit(1)
+
+        console.print("[dim]Re-installing in editable mode...[/]")
+        try:
+            result = subprocess.run(
+                pip_prefix + ["install", "-e", REPO_ROOT],
+                capture_output=False, text=True, timeout=300,
+            )
+            if result.returncode == 0:
+                console.print("\n[green]phronis updated successfully from source![/]")
+            else:
+                console.print("\n[red]Re-install failed.[/]")
+                raise typer.Exit(1)
+        except Exception as e:
+            console.print(f"\n[red]Re-install error: {e}[/]")
+            raise typer.Exit(1)
+    else:
+        if force_pip and is_source_install:
+            console.print("[yellow]--force-pip set; skipping git pull and forcing PyPI upgrade.[/]\n")
+
+        console.print("[dim]Installing latest version from PyPI...[/]")
+        try:
+            result = subprocess.run(
+                pip_prefix + ["install", "--upgrade", "phronis"],
+                capture_output=False, text=True, timeout=300,
+            )
+            if result.returncode == 0:
+                console.print("\n[green]phronis updated successfully from PyPI![/]")
+            else:
+                console.print("\n[red]Update failed.[/]")
+                raise typer.Exit(1)
+        except Exception as e:
+            console.print(f"\n[red]Update error: {e}[/]")
+            raise typer.Exit(1)
 
 
 @app.command()
