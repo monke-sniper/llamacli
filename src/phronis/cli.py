@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from datetime import datetime
 
 import questionary
@@ -19,9 +20,12 @@ from . import (
     CONFIGS_DIR,
     DATASET_INFO,
     DATA_DIR,
+    HF_CACHE,
     MODELS_DIR,
     PROJECT_ROOT,
+    REPO_ROOT,
     SAVES_DIR,
+    STATE_PATH,
     YAML_DIR,
 )
 from .hf import download_model, download_dataset, download_model_interactive, download_dataset_interactive
@@ -1843,6 +1847,674 @@ def clean(
                 console.print(f"[red]Failed to delete {label}: {e}[/]")
         else:
             console.print(f"[dim]{label} not found: {path}[/]")
+
+
+# ─────────────────────────────────────────────────────────────
+# Config management
+# ─────────────────────────────────────────────────────────────
+config_app = typer.Typer()
+app.add_typer(config_app, name="config")
+
+@config_app.command("get")
+def config_get(key: str) -> None:
+    """Get a value from .phronis.yaml state."""
+    valid_keys = ("active_model", "active_adapter", "active_template", "active_dataset", "theme")
+    if key not in valid_keys:
+        console.print(f"[red]Unknown key '{key}'. Valid: {', '.join(valid_keys)}[/]")
+        raise typer.Exit(1)
+    state = get_state()
+    value = getattr(state, key, "")
+    console.print(f"{key} = {value}")
+
+@config_app.command("set")
+def config_set(key: str, value: str) -> None:
+    """Set a value in .phronis.yaml state."""
+    valid_keys = ("active_model", "active_adapter", "active_template", "active_dataset", "theme")
+    if key not in valid_keys:
+        console.print(f"[red]Unknown key '{key}'. Valid: {', '.join(valid_keys)}[/]")
+        raise typer.Exit(1)
+    state = get_state()
+    setattr(state, key, value)
+    state.save()
+    console.print(f"[green]Set {key} = {value}[/]")
+
+
+# ─────────────────────────────────────────────────────────────
+# Uninstall
+# ─────────────────────────────────────────────────────────────
+@app.command()
+def uninstall(
+    workspace: bool = typer.Option(False, "--workspace", help="Also remove the workspace directory"),
+    venv: bool = typer.Option(True, "--venv/--no-venv", help="Remove the isolated venv"),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+) -> None:
+    """Uninstall phronis and optionally its workspace."""
+    console.print("[bold]phronis Uninstall[/bold]\n")
+
+    from .env_setup import _venv_dir, is_inside_isolated_venv
+
+    actions = []
+    actions.append(("pip package", "phronis"))
+    venv_dir = _venv_dir()
+    if venv and os.path.isdir(venv_dir):
+        actions.append(("isolated venv", venv_dir))
+    if workspace:
+        actions.append(("workspace", PROJECT_ROOT))
+
+    if not force:
+        console.print("[yellow]Will remove:[/]")
+        for label, path in actions:
+            console.print(f"  {label}: {path}")
+        try:
+            ans = input("Proceed? (y/n): ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            console.print("[dim]Cancelled.[/]")
+            return
+        if ans != "y":
+            console.print("[dim]Cancelled.[/]")
+            return
+
+    pip_prefix = [sys.executable, "-m", "pip"]
+    try:
+        subprocess.run(
+            pip_prefix + ["uninstall", "phronis", "-y"],
+            capture_output=False, text=True, timeout=120,
+        )
+    except Exception as e:
+        console.print(f"[yellow]pip uninstall warning: {e}[/]")
+
+    for label, path in actions[1:]:
+        if os.path.isdir(path):
+            try:
+                shutil.rmtree(path)
+                console.print(f"[green]Removed {label}: {path}[/]")
+            except Exception as e:
+                console.print(f"[red]Failed to remove {label}: {e}[/]")
+
+    console.print("\n[green]phronis has been uninstalled.[/]")
+    if not workspace:
+        console.print(f"[dim]Workspace preserved at: {PROJECT_ROOT}[/]")
+
+
+# ─────────────────────────────────────────────────────────────
+# Repair
+# ─────────────────────────────────────────────────────────────
+@app.command()
+def repair(
+    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+) -> None:
+    """Rebuild the isolated workspace environment."""
+    console.print("[bold]phronis Repair[/bold]\n")
+
+    from .env_setup import _venv_dir, ensure_isolated_venv, is_inside_isolated_venv
+
+    venv_dir = _venv_dir()
+    if not force and os.path.isdir(venv_dir):
+        console.print(f"[yellow]Will delete and recreate:[/] {venv_dir}")
+        try:
+            ans = input("Proceed? (y/n): ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            console.print("[dim]Cancelled.[/]")
+            return
+        if ans != "y":
+            console.print("[dim]Cancelled.[/]")
+            return
+
+    if os.path.isdir(venv_dir):
+        try:
+            shutil.rmtree(venv_dir)
+            console.print(f"[green]Removed old venv: {venv_dir}[/]")
+        except Exception as e:
+            console.print(f"[red]Failed to remove venv: {e}[/]")
+            raise typer.Exit(1)
+
+    if ensure_isolated_venv(console):
+        console.print("\n[green]Environment repaired successfully.[/]")
+    else:
+        console.print("\n[red]Repair failed.[/]")
+        raise typer.Exit(1)
+
+
+# ─────────────────────────────────────────────────────────────
+# Reinstall
+# ─────────────────────────────────────────────────────────────
+@app.command()
+def reinstall(
+    force_pip: bool = typer.Option(False, "--force-pip", help="Force PyPI reinstall even for source installs"),
+) -> None:
+    """Reinstall phronis cleanly (git pull + repair for source, force-reinstall for PyPI)."""
+    console.print("[bold]phronis Reinstall[/bold]\n")
+
+    from .env_setup import _venv_dir, ensure_isolated_venv, is_inside_isolated_venv
+
+    is_source = os.path.isdir(os.path.join(REPO_ROOT, ".git"))
+    pip_prefix = [sys.executable, "-m", "pip"]
+
+    if is_source and not force_pip:
+        console.print("[dim]Source install detected. Pulling latest code...[/]")
+        try:
+            subprocess.run(
+                ["git", "-C", REPO_ROOT, "pull"],
+                capture_output=False, text=True, timeout=120,
+            )
+        except Exception as e:
+            console.print(f"[red]Git pull failed: {e}[/]")
+            raise typer.Exit(1)
+
+        console.print("[dim]Installing in editable mode...[/]")
+        try:
+            subprocess.run(
+                pip_prefix + ["install", "-e", REPO_ROOT],
+                capture_output=False, text=True, timeout=300,
+            )
+        except Exception as e:
+            console.print(f"[red]Editable install failed: {e}[/]")
+            raise typer.Exit(1)
+    else:
+        if force_pip and is_source:
+            console.print("[yellow]--force-pip set; forcing PyPI reinstall.[/]")
+        console.print("[dim]Reinstalling from PyPI...[/]")
+        try:
+            subprocess.run(
+                pip_prefix + ["install", "--upgrade", "--force-reinstall", "phronis"],
+                capture_output=False, text=True, timeout=300,
+            )
+        except Exception as e:
+            console.print(f"[red]PyPI reinstall failed: {e}[/]")
+            raise typer.Exit(1)
+
+    venv_dir = _venv_dir()
+    if os.path.isdir(venv_dir):
+        if is_source and not force_pip:
+            console.print("\n[dim]Rebuilding isolated environment...[/]")
+        if ensure_isolated_venv(console):
+            console.print("\n[green]phronis reinstalled successfully![/]")
+        else:
+            console.print("\n[yellow]Package reinstalled, but isolated env repair failed.[/]")
+            raise typer.Exit(1)
+    else:
+        console.print("\n[green]phronis reinstalled successfully![/]")
+
+
+# ─────────────────────────────────────────────────────────────
+# Reset
+# ─────────────────────────────────────────────────────────────
+@app.command()
+def reset(
+    history: bool = typer.Option(False, "--history", help="Clear training history"),
+    state: bool = typer.Option(False, "--state", help="Reset all state to defaults"),
+    all: bool = typer.Option(False, "--all", help="Full factory reset including files"),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+) -> None:
+    """Reset phronis state, history, or workspace files."""
+    console.print("[bold]phronis Reset[/bold]\n")
+
+    targets = []
+    if history:
+        targets.append("training history")
+    if state:
+        targets.append("app state (.phronis.yaml)")
+    if all:
+        targets.extend(["configs", "saves", "models", "state", "history"])
+
+    if not targets:
+        console.print("[yellow]Nothing to reset. Use --history, --state, or --all.[/]")
+        raise typer.Exit(1)
+
+    if not force:
+        console.print("[yellow]Will reset:[/]")
+        for t in targets:
+            console.print(f"  - {t}")
+        try:
+            ans = input("Proceed? (y/n): ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            console.print("[dim]Cancelled.[/]")
+            return
+        if ans != "y":
+            console.print("[dim]Cancelled.[/]")
+            return
+
+    state_obj = get_state()
+    if history or all:
+        state_obj.training_history = []
+        console.print("[green]Cleared training history.[/]")
+
+    if state or all:
+        state_obj.active_model = ""
+        state_obj.active_adapter = ""
+        state_obj.active_template = "qwen3"
+        state_obj.active_dataset = ""
+        state_obj.theme = "dark"
+        console.print("[green]Reset app state to defaults.[/]")
+    state_obj.save()
+
+    if all:
+        for d, label in ((CONFIGS_DIR, "configs"), (SAVES_DIR, "saves"), (MODELS_DIR, "models")):
+            if os.path.isdir(d):
+                try:
+                    shutil.rmtree(d)
+                    console.print(f"[green]Deleted {label}: {d}[/]")
+                except Exception as e:
+                    console.print(f"[red]Failed to delete {label}: {e}[/]")
+            else:
+                console.print(f"[dim]{label} not found: {d}[/]")
+
+    console.print("\n[green]Reset complete.[/]")
+
+
+# ─────────────────────────────────────────────────────────────
+# Backup / Restore
+# ─────────────────────────────────────────────────────────────
+@app.command()
+def backup(
+    path: str = typer.Argument(None, help="Output path for backup archive (.zip)"),
+) -> None:
+    """Backup workspace state to a zip file."""
+    import zipfile as zf
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    default_path = os.path.join(os.path.expanduser("~"), f"phronis_backup_{timestamp}.zip")
+    out_path = os.path.abspath(path or default_path)
+
+    console.print(f"[bold]phronis Backup[/bold]\n")
+    console.print(f"[dim]Creating archive: {out_path}[/]")
+
+    try:
+        with zf.ZipFile(out_path, "w", zf.ZIP_DEFLATED) as z:
+            for root, dirs, files in os.walk(PROJECT_ROOT):
+                for f in files:
+                    full = os.path.join(root, f)
+                    arcname = os.path.relpath(full, PROJECT_ROOT)
+                    z.write(full, arcname)
+        console.print(f"\n[green]Backup saved: {out_path}[/]")
+    except Exception as e:
+        console.print(f"\n[red]Backup failed: {e}[/]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def restore(
+    path: str = typer.Argument(..., help="Path to backup archive (.zip)"),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+) -> None:
+    """Restore workspace state from a backup archive."""
+    import zipfile as zf
+
+    console.print(f"[bold]phronis Restore[/bold]\n")
+
+    if not os.path.isfile(path):
+        console.print(f"[red]Backup not found: {path}[/]")
+        raise typer.Exit(1)
+
+    if not force:
+        console.print(f"[yellow]Will extract {path} into:[/] {PROJECT_ROOT}")
+        try:
+            ans = input("Proceed? (y/n): ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            console.print("[dim]Cancelled.[/]")
+            return
+        if ans != "y":
+            console.print("[dim]Cancelled.[/]")
+            return
+
+    try:
+        with zf.ZipFile(path, "r") as z:
+            z.extractall(PROJECT_ROOT)
+        console.print(f"\n[green]Restored to: {PROJECT_ROOT}[/]")
+    except Exception as e:
+        console.print(f"\n[red]Restore failed: {e}[/]")
+        raise typer.Exit(1)
+
+
+# ─────────────────────────────────────────────────────────────
+# Delete sub-commands
+# ─────────────────────────────────────────────────────────────
+delete_app = typer.Typer()
+app.add_typer(delete_app, name="delete")
+
+@delete_app.command("dataset")
+def delete_dataset(
+    name: str = typer.Argument(..., help="Dataset name to remove from registry"),
+    keep_files: bool = typer.Option(False, "--keep-files", help="Keep the data file, only unregister"),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+) -> None:
+    """Unregister and optionally delete a dataset."""
+    console.print(f"[bold]Delete Dataset: {name}[/bold]\n")
+
+    if not os.path.isfile(DATASET_INFO):
+        console.print("[red]No dataset registry found.[/]")
+        raise typer.Exit(1)
+
+    with open(DATASET_INFO, "r", encoding="utf-8") as f:
+        registry = json.load(f)
+
+    if name not in registry:
+        console.print(f"[red]Dataset '{name}' not found in registry.[/]")
+        raise typer.Exit(1)
+
+    entry = registry[name]
+    file_name = entry.get("file_name", "")
+
+    if not force:
+        action = "Unregister only" if keep_files else "Unregister and delete"
+        console.print(f"[yellow]{action} dataset '{name}'?[/]")
+        try:
+            ans = input("Proceed? (y/n): ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            console.print("[dim]Cancelled.[/]")
+            return
+        if ans != "y":
+            console.print("[dim]Cancelled.[/]")
+            return
+
+    del registry[name]
+    with open(DATASET_INFO, "w", encoding="utf-8") as f:
+        json.dump(registry, f, indent=2)
+
+    if not keep_files and file_name:
+        data_file = os.path.join(DATA_DIR, file_name)
+        if os.path.isfile(data_file):
+            try:
+                os.remove(data_file)
+                console.print(f"[green]Deleted data file: {data_file}[/]")
+            except Exception as e:
+                console.print(f"[yellow]Could not delete data file: {e}[/]")
+
+    console.print(f"[green]Dataset '{name}' removed from registry.[/]")
+
+
+@delete_app.command("adapter")
+def delete_adapter(
+    name: str = typer.Argument(..., help="Adapter run name or path to delete"),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+) -> None:
+    """Delete a LoRA adapter (training run output)."""
+    console.print(f"[bold]Delete Adapter: {name}[/bold]\n")
+
+    adapter_dir = name if os.path.isdir(name) else os.path.join(SAVES_DIR, name)
+    if not os.path.isdir(adapter_dir):
+        console.print(f"[red]Adapter not found: {adapter_dir}[/]")
+        raise typer.Exit(1)
+
+    if not force:
+        console.print(f"[yellow]Delete adapter directory?[/]\n  {adapter_dir}")
+        try:
+            ans = input("Proceed? (y/n): ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            console.print("[dim]Cancelled.[/]")
+            return
+        if ans != "y":
+            console.print("[dim]Cancelled.[/]")
+            return
+
+    try:
+        shutil.rmtree(adapter_dir)
+        console.print(f"[green]Deleted adapter: {adapter_dir}[/]")
+    except Exception as e:
+        console.print(f"[red]Failed to delete adapter: {e}[/]")
+        raise typer.Exit(1)
+
+
+@delete_app.command("run")
+def delete_run(
+    name: str = typer.Argument(..., help="Training run name to delete"),
+    force: bool = typer.Option(False, "--force", help="Skip confirmation"),
+) -> None:
+    """Delete a training run (saves, config, and history entry)."""
+    console.print(f"[bold]Delete Run: {name}[/bold]\n")
+
+    run_dir = os.path.join(SAVES_DIR, name)
+    run_config = os.path.join(CONFIGS_DIR, f"{name}.yaml")
+
+    if not os.path.isdir(run_dir) and not os.path.isfile(run_config):
+        console.print(f"[red]Run not found: {name}[/]")
+        raise typer.Exit(1)
+
+    if not force:
+        console.print(f"[yellow]Delete run '{name}' including saves and config?[/]")
+        try:
+            ans = input("Proceed? (y/n): ").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            console.print("[dim]Cancelled.[/]")
+            return
+        if ans != "y":
+            console.print("[dim]Cancelled.[/]")
+            return
+
+    if os.path.isdir(run_dir):
+        try:
+            shutil.rmtree(run_dir)
+            console.print(f"[green]Deleted run directory: {run_dir}[/]")
+        except Exception as e:
+            console.print(f"[red]Failed to delete run directory: {e}[/]")
+
+    if os.path.isfile(run_config):
+        try:
+            os.remove(run_config)
+            console.print(f"[green]Deleted config: {run_config}[/]")
+        except Exception as e:
+            console.print(f"[yellow]Could not delete config: {e}[/]")
+
+    state = get_state()
+    state.training_history = [h for h in state.training_history if h.get("name") != name]
+    state.save()
+    console.print(f"[green]Removed '{name}' from training history.[/]")
+    console.print("[green]Run deleted.[/]")
+
+
+# ─────────────────────────────────────────────────────────────
+# Logs
+# ─────────────────────────────────────────────────────────────
+@app.command()
+def logs(
+    run_name: str = typer.Argument(..., help="Name of the training run"),
+    tail: int = typer.Option(50, "--tail", help="Number of lines to show"),
+) -> None:
+    """Show training logs for a past run."""
+    import glob
+
+    run_dir = os.path.join(SAVES_DIR, run_name)
+    if not os.path.isdir(run_dir):
+        console.print(f"[red]Run not found: {run_dir}[/]")
+        raise typer.Exit(1)
+
+    # Look for any .log files in the run directory
+    log_files = glob.glob(os.path.join(run_dir, "*.log"))
+    if not log_files:
+        # Also check for trainer_state.json or other common artifacts
+        console.print(f"[yellow]No .log files found in {run_dir}.[/]")
+        console.print("[dim]Showing directory contents:[/]")
+        for entry in os.listdir(run_dir):
+            console.print(f"  {entry}")
+        return
+
+    log_file = log_files[0]
+    console.print(f"[dim]Log file: {log_file}[/]\n")
+    try:
+        with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        start = max(0, len(lines) - tail)
+        for line in lines[start:]:
+            console.print(line.rstrip())
+    except Exception as e:
+        console.print(f"[red]Could not read log: {e}[/]")
+        raise typer.Exit(1)
+
+
+# ─────────────────────────────────────────────────────────────
+# Evaluate
+# ─────────────────────────────────────────────────────────────
+@app.command()
+def evaluate(
+    adapter: str = typer.Option(..., "--adapter", "-a", help="Path to LoRA adapter"),
+    dataset: str = typer.Option(..., "--dataset", "-d", help="Dataset to evaluate on"),
+    template: str = typer.Option(None, "--template", "-t", help="Chat template (default: state.active_template)"),
+    output: str = typer.Option(None, "--output", "-o", help="Output directory"),
+) -> None:
+    """Evaluate a trained adapter on a dataset via LLaMA-Factory."""
+    console.print("[bold]phronis Evaluate[/bold]\n")
+
+    state = get_state()
+    tpl = template or state.active_template or "qwen3"
+    out_dir = output or os.path.join(PROJECT_ROOT, "eval", os.path.basename(adapter))
+    os.makedirs(out_dir, exist_ok=True)
+
+    base_model = state.active_model or ""
+    adapter_path = adapter if os.path.isdir(adapter) else os.path.join(SAVES_DIR, adapter, "lora")
+    if not os.path.isdir(adapter_path):
+        console.print(f"[red]Adapter not found: {adapter_path}[/]")
+        raise typer.Exit(1)
+
+    # Resolve dataset name to file path
+    dataset_file = dataset
+    if os.path.isfile(DATASET_INFO):
+        with open(DATASET_INFO, "r", encoding="utf-8") as f:
+            registry = json.load(f)
+        if dataset in registry:
+            dataset_file = os.path.join(DATA_DIR, registry[dataset]["file_name"])
+
+    eval_config = {
+        "model_name_or_path": base_model,
+        "adapter_name_or_path": adapter_path,
+        "dataset": dataset_file,
+        "template": tpl,
+        "output_dir": out_dir,
+        "do_train": False,
+        "do_eval": True,
+        "per_device_eval_batch_size": 1,
+        "overwrite_output_dir": True,
+    }
+
+    eval_yaml = os.path.join(out_dir, "eval_config.yaml")
+    with open(eval_yaml, "w", encoding="utf-8") as f:
+        yaml.dump(eval_config, f, default_flow_style=False, allow_unicode=True)
+
+    try:
+        from .runner import _get_cli
+        cli = _get_cli()
+    except Exception as exc:
+        console.print(f"[red]llamafactory-cli not found: {exc}[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[dim]Running evaluation...[/]")
+    try:
+        result = subprocess.run(
+            [cli, "eval", eval_yaml],
+            capture_output=False, text=True, timeout=1800,
+        )
+        if result.returncode == 0:
+            console.print(f"\n[green]Evaluation complete. Results in: {out_dir}[/]")
+        else:
+            console.print("\n[red]Evaluation failed.[/]")
+            raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Evaluation error: {e}[/]")
+        raise typer.Exit(1)
+
+
+# ─────────────────────────────────────────────────────────────
+# Serve
+# ─────────────────────────────────────────────────────────────
+@app.command()
+def serve(
+    model: str = typer.Option(..., "--model", "-m", help="Path to exported model"),
+    backend: str = typer.Option("vllm", "--backend", help="Inference backend: vllm, tgi"),
+    port: int = typer.Option(8000, "--port", help="Server port"),
+) -> None:
+    """Launch an inference server from an exported model."""
+    console.print(f"[bold]phronis Serve[/bold]  ({backend} on port {port})\n")
+
+    model_path = model if os.path.isdir(model) else os.path.join(MODELS_DIR, model)
+    if not os.path.isdir(model_path):
+        console.print(f"[red]Model not found: {model_path}[/]")
+        raise typer.Exit(1)
+
+    if backend == "vllm":
+        try:
+            import vllm  # noqa: F401
+        except ImportError:
+            console.print("[red]vLLM is not installed.[/]")
+            console.print("[dim]Install: pip install vllm[/]")
+            raise typer.Exit(1)
+        cmd = [
+            sys.executable, "-m", "vllm.entrypoints.openai.api_server",
+            "--model", model_path,
+            "--port", str(port),
+        ]
+    elif backend == "tgi":
+        tgi = shutil.which("text-generation-launcher")
+        if not tgi:
+            console.print("[red]TGI launcher not found.[/]")
+            console.print("[dim]Install: https://huggingface.co/docs/text-generation-inference[/]")
+            raise typer.Exit(1)
+        cmd = [tgi, "--model-id", model_path, "--port", str(port)]
+    else:
+        console.print(f"[red]Unsupported backend: {backend}. Use: vllm, tgi[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[dim]Launching server...[/]")
+    try:
+        subprocess.run(cmd)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Server stopped.[/]")
+
+
+# ─────────────────────────────────────────────────────────────
+# Convert
+# ─────────────────────────────────────────────────────────────
+@app.command()
+def convert(
+    model: str = typer.Option(..., "--model", "-m", help="Path to exported model"),
+    format: str = typer.Option("gguf", "--format", help="Target format: gguf, onnx, awq, gptq"),
+    output: str = typer.Option(None, "--output", "-o", help="Output path"),
+) -> None:
+    """Convert an exported model to another format."""
+    console.print(f"[bold]phronis Convert[/bold]  (format: {format})\n")
+
+    model_path = model if os.path.isdir(model) else os.path.join(MODELS_DIR, model)
+    if not os.path.isdir(model_path):
+        console.print(f"[red]Model not found: {model_path}[/]")
+        raise typer.Exit(1)
+
+    out_path = output or os.path.join(MODELS_DIR, f"{os.path.basename(model_path)}_{format}")
+    os.makedirs(out_path, exist_ok=True)
+
+    if format == "gguf":
+        convert_script = shutil.which("convert-hf-to-gguf.py")
+        if not convert_script:
+            # Try llama.cpp repo
+            convert_script = shutil.which("convert.py")
+        if not convert_script:
+            console.print("[red]llama.cpp conversion script not found.[/]")
+            console.print("[dim]Install: git clone https://github.com/ggerganov/llama.cpp && pip install -r requirements.txt[/]")
+            raise typer.Exit(1)
+        cmd = [sys.executable, convert_script, model_path, "--outfile", os.path.join(out_path, "model.gguf")]
+    elif format == "onnx":
+        try:
+            import optimum  # noqa: F401
+        except ImportError:
+            console.print("[red]optimum is not installed.[/]")
+            console.print("[dim]Install: pip install optimum[onnxruntime][/]")
+            raise typer.Exit(1)
+        cmd = [
+            sys.executable, "-m", "optimum-cli", "export", "onnx",
+            "--model", model_path, out_path,
+        ]
+    else:
+        console.print(f"[red]Format '{format}' is not yet supported. Use: gguf, onnx[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[dim]Converting... This may take a while.[/]")
+    try:
+        result = subprocess.run(cmd, capture_output=False, text=True, timeout=3600)
+        if result.returncode == 0:
+            console.print(f"\n[green]Conversion complete: {out_path}[/]")
+        else:
+            console.print("\n[red]Conversion failed.[/]")
+            raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Conversion error: {e}[/]")
+        raise typer.Exit(1)
 
 
 def entry() -> None:
