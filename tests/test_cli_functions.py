@@ -518,3 +518,114 @@ class TestCheckFirstRun:
                 phronis.PROJECT_ROOT = old_project_root
                 state_mod.STATE_PATH = old_state_path
                 state_mod._state = None
+
+
+
+class TestUpdateCommand:
+    def test_source_install_runs_git_pull_and_pip_install_e(self, monkeypatch, tmp_path):
+        import phronis
+        import phronis.cli as cli_mod
+        captured = []
+
+        def _fake_run(args, **kwargs):
+            captured.append(args)
+            class _R:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+            return _R()
+
+        monkeypatch.setattr(cli_mod.subprocess, "run", _fake_run)
+
+        fake_repo = str(tmp_path / "fake_repo")
+        os.makedirs(os.path.join(fake_repo, ".git"))
+        monkeypatch.setattr(phronis, "REPO_ROOT", fake_repo)
+
+        monkeypatch.setattr(cli_mod, "console", _dummy_console())
+
+        cli_mod.update(check=False, force_pip=False)
+
+        cmds = [" ".join(str(a) for a in c) for c in captured]
+        assert any("git -C" in c and "pull" in c for c in cmds), f"Expected git pull, got: {cmds}"
+        assert any("pip install -e" in c for c in cmds), f"Expected pip install -e, got: {cmds}"
+
+    def test_pypi_install_runs_pip_upgrade(self, monkeypatch, tmp_path):
+        import phronis
+        import phronis.cli as cli_mod
+        captured = []
+
+        def _fake_run(args, **kwargs):
+            captured.append(args)
+            class _R:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+            return _R()
+
+        monkeypatch.setattr(cli_mod.subprocess, "run", _fake_run)
+
+        fake_repo = str(tmp_path / "fake_repo")
+        os.makedirs(fake_repo, exist_ok=True)
+        monkeypatch.setattr(phronis, "REPO_ROOT", fake_repo)
+
+        monkeypatch.setattr(cli_mod, "console", _dummy_console())
+
+        cli_mod.update(check=False, force_pip=False)
+
+        cmds = [" ".join(str(a) for a in c) for c in captured]
+        assert any("pip install --upgrade phronis" in c for c in cmds), f"Expected pip upgrade, got: {cmds}"
+
+    def test_check_shows_source_type(self, monkeypatch, tmp_path):
+        import phronis
+        import phronis.cli as cli_mod
+        captured = []
+
+        def _fake_run(args, **kwargs):
+            captured.append(args)
+            class _R:
+                returncode = 0
+                stdout = "LATEST: 9.9.9"
+                stderr = ""
+            return _R()
+
+        monkeypatch.setattr(cli_mod.subprocess, "run", _fake_run)
+
+        fake_repo = str(tmp_path / "fake_repo")
+        os.makedirs(os.path.join(fake_repo, ".git"))
+        monkeypatch.setattr(phronis, "REPO_ROOT", fake_repo)
+
+        console = _dummy_console()
+        monkeypatch.setattr(cli_mod, "console", console)
+
+        cli_mod.update(check=True, force_pip=False)
+
+        output = console.file.getvalue()
+        assert "source (git)" in output, f"Expected 'source (git)' in output. Got: {output}"
+        assert fake_repo in output, f"Expected repo path in output. Got: {output}"
+
+    def test_force_pip_skips_git(self, monkeypatch, tmp_path):
+        import phronis
+        import phronis.cli as cli_mod
+        captured = []
+
+        def _fake_run(args, **kwargs):
+            captured.append(args)
+            class _R:
+                returncode = 0
+                stdout = "LATEST: 9.9.9"
+                stderr = ""
+            return _R()
+
+        monkeypatch.setattr(cli_mod.subprocess, "run", _fake_run)
+
+        fake_repo = str(tmp_path / "fake_repo")
+        os.makedirs(os.path.join(fake_repo, ".git"))
+        monkeypatch.setattr(phronis, "REPO_ROOT", fake_repo)
+
+        monkeypatch.setattr(cli_mod, "console", _dummy_console())
+
+        cli_mod.update(check=False, force_pip=True)
+
+        cmds = [" ".join(str(a) for a in c) for c in captured]
+        assert not any("git" in c for c in cmds), f"Did not expect git command, got: {cmds}"
+        assert any("pip install --upgrade phronis" in c for c in cmds), f"Expected pip upgrade, got: {cmds}"
