@@ -435,6 +435,82 @@ class TestDatasetColumnsMapping:
         assert fmt is None
         assert cols is None
 
+    def test_ensure_dataset_registered(self, monkeypatch, tmp_path):
+        import phronis.prompts as prompts_mod
+
+        fake_data_dir = str(tmp_path / "data")
+        os.makedirs(fake_data_dir)
+        dsi = os.path.join(fake_data_dir, "dataset_info.json")
+
+        # Create a sharegpt dataset file
+        with open(os.path.join(fake_data_dir, "my_chat.json"), "w") as f:
+            json.dump([{"messages": [{"role": "user", "content": "hi"}]}], f)
+
+        monkeypatch.setattr(prompts_mod, "DATA_DIR", fake_data_dir)
+        monkeypatch.setattr(prompts_mod, "DATASET_INFO", dsi)
+
+        ok = prompts_mod._ensure_dataset_registered("my_chat")
+        assert ok, "Dataset should be registered"
+        with open(dsi) as f:
+            registry = json.load(f)
+        assert "my_chat" in registry
+        assert registry["my_chat"]["formatting"] == "sharegpt"
+        assert registry["my_chat"]["columns"]["messages"] == "messages"
+
+    def test_ensure_dataset_registered_already_exists(self, monkeypatch, tmp_path):
+        import phronis.prompts as prompts_mod
+
+        fake_data_dir = str(tmp_path / "data")
+        os.makedirs(fake_data_dir)
+        dsi = os.path.join(fake_data_dir, "dataset_info.json")
+
+        with open(dsi, "w") as f:
+            json.dump({"existing": {"file_name": "existing.json", "formatting": "alpaca"}}, f)
+
+        monkeypatch.setattr(prompts_mod, "DATA_DIR", fake_data_dir)
+        monkeypatch.setattr(prompts_mod, "DATASET_INFO", dsi)
+
+        ok = prompts_mod._ensure_dataset_registered("existing")
+        assert ok, "Already registered dataset should return True"
+
+    def test_cleanup_stale_datasets(self, monkeypatch, tmp_path):
+        import phronis.prompts as prompts_mod
+
+        fake_data_dir = str(tmp_path / "data")
+        os.makedirs(fake_data_dir)
+        dsi = os.path.join(fake_data_dir, "dataset_info.json")
+
+        # Register a dataset whose file exists and one whose file is missing
+        with open(dsi, "w") as f:
+            json.dump({
+                "good": {"file_name": "good.json", "formatting": "alpaca"},
+                "bad": {"file_name": "bad.json", "formatting": "alpaca"},
+            }, f)
+
+        with open(os.path.join(fake_data_dir, "good.json"), "w") as f:
+            json.dump([{"instruction": "x", "output": "y"}], f)
+
+        monkeypatch.setattr(prompts_mod, "DATA_DIR", fake_data_dir)
+        monkeypatch.setattr(prompts_mod, "DATASET_INFO", dsi)
+
+        prompts_mod._cleanup_stale_datasets()
+        with open(dsi) as f:
+            registry = json.load(f)
+        assert "good" in registry
+        assert "bad" not in registry
+
+    def test_uniform_workspace_paths(self):
+        import phronis
+        # All paths should be workspace-based, not repo-based
+        assert "phronisworkspace" in phronis.DATA_DIR.lower() or "workspace" in phronis.DATA_DIR.lower()
+        assert "phronisworkspace" in phronis.YAML_DIR.lower() or "workspace" in phronis.YAML_DIR.lower()
+        assert "src" not in phronis.DATA_DIR.lower(), "DATA_DIR should not be inside src/"
+
+    def test_bundled_data_source_is_package(self):
+        import phronis
+        # Bundled data source should still point to package dir
+        assert "src" in phronis.BUNDLED_DATA_SOURCE or "phronis" in phronis.BUNDLED_DATA_SOURCE
+
 
 class TestLogo:
     def test_logo_returns_text(self):
