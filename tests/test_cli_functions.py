@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import pytest
 import tempfile
 
 
@@ -629,3 +630,325 @@ class TestUpdateCommand:
         cmds = [" ".join(str(a) for a in c) for c in captured]
         assert not any("git" in c for c in cmds), f"Did not expect git command, got: {cmds}"
         assert any("pip install --upgrade phronis" in c for c in cmds), f"Expected pip upgrade, got: {cmds}"
+
+
+class TestConfigCommands:
+    def test_config_get_valid_key(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+        import phronis.state as state_mod
+
+        fd, temp_path = tempfile.mkstemp(suffix=".yaml")
+        os.close(fd)
+        old_path = state_mod.STATE_PATH
+        state_mod.STATE_PATH = temp_path
+        state_mod._state = None
+
+        try:
+            console = _dummy_console()
+            monkeypatch.setattr(cli_mod, "console", console)
+            cli_mod.config_get("active_template")
+            output = console.file.getvalue()
+            assert "active_template" in output
+        finally:
+            state_mod.STATE_PATH = old_path
+            state_mod._state = None
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    def test_config_get_invalid_key(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+
+        console = _dummy_console()
+        monkeypatch.setattr(cli_mod, "console", console)
+        try:
+            cli_mod.config_get("invalid_key")
+            assert False, "Should have exited"
+        except Exception:
+            pass
+        output = console.file.getvalue()
+        assert "Unknown key" in output, f"Expected error message in output. Got: {output}"
+
+    def test_config_set_and_persist(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+        import phronis.state as state_mod
+
+        fd, temp_path = tempfile.mkstemp(suffix=".yaml")
+        os.close(fd)
+        old_path = state_mod.STATE_PATH
+        state_mod.STATE_PATH = temp_path
+        state_mod._state = None
+
+        try:
+            console = _dummy_console()
+            monkeypatch.setattr(cli_mod, "console", console)
+            cli_mod.config_set("active_model", "test/model")
+            state = state_mod.get_state()
+            assert state.active_model == "test/model"
+        finally:
+            state_mod.STATE_PATH = old_path
+            state_mod._state = None
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+
+class TestUninstallCommand:
+    def test_uninstall_confirms_and_removes(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+        captured = []
+
+        def _fake_run(args, **kwargs):
+            captured.append(args)
+            class _R:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+            return _R()
+
+        monkeypatch.setattr(cli_mod.subprocess, "run", _fake_run)
+
+        fake_venv = str(tmp_path / "venv")
+        os.makedirs(fake_venv)
+        fake_repo = str(tmp_path / "repo")
+        os.makedirs(fake_repo)
+
+        monkeypatch.setattr(cli_mod, "PROJECT_ROOT", fake_repo)
+        monkeypatch.setattr(cli_mod, "console", _dummy_console())
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+
+        monkeypatch.setattr("phronis.env_setup._venv_dir", lambda: fake_venv)
+
+        try:
+            cli_mod.uninstall(workspace=True, venv=True, force=False)
+        except SystemExit:
+            pass
+
+        cmds = [" ".join(str(a) for a in c) for c in captured]
+        assert any("uninstall" in c and "phronis" in c for c in cmds), f"Expected pip uninstall, got: {cmds}"
+
+
+class TestRepairCommand:
+    def test_repair_triggers_venv_rebuild(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+
+        fake_venv = str(tmp_path / "venv")
+        os.makedirs(fake_venv)
+        monkeypatch.setattr(cli_mod, "console", _dummy_console())
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+
+        monkeypatch.setattr("phronis.env_setup._venv_dir", lambda: fake_venv)
+        monkeypatch.setattr("phronis.env_setup.ensure_isolated_venv", lambda console: True)
+
+        try:
+            cli_mod.repair(force=False)
+        except SystemExit:
+            pass
+        assert not os.path.isdir(fake_venv), "venv should have been removed"
+
+
+class TestResetCommand:
+    def test_reset_history(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+        import phronis.state as state_mod
+
+        fd, temp_path = tempfile.mkstemp(suffix=".yaml")
+        os.close(fd)
+        old_path = state_mod.STATE_PATH
+        state_mod.STATE_PATH = temp_path
+        state_mod._state = None
+
+        try:
+            state = state_mod.get_state()
+            state.training_history = [{"name": "run1"}]
+            state.save()
+
+            monkeypatch.setattr(cli_mod, "console", _dummy_console())
+            monkeypatch.setattr("builtins.input", lambda _: "y")
+            cli_mod.reset(history=True, state=False, all=False, force=False)
+
+            state = state_mod.get_state()
+            assert state.training_history == []
+        finally:
+            state_mod.STATE_PATH = old_path
+            state_mod._state = None
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+
+class TestBackupRestore:
+    def test_backup_and_restore_roundtrip(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+
+        fake_workspace = str(tmp_path / "workspace")
+        os.makedirs(fake_workspace)
+        # Write a known file
+        test_file = os.path.join(fake_workspace, "test.txt")
+        with open(test_file, "w") as f:
+            f.write("hello")
+
+        old_project_root = cli_mod.PROJECT_ROOT
+        monkeypatch.setattr(cli_mod, "PROJECT_ROOT", fake_workspace)
+        monkeypatch.setattr(cli_mod, "console", _dummy_console())
+
+        backup_path = str(tmp_path / "backup.zip")
+        try:
+            cli_mod.backup(path=backup_path)
+            assert os.path.isfile(backup_path), "Backup archive should exist"
+
+            # Cleanup workspace
+            os.remove(test_file)
+            assert not os.path.isfile(test_file)
+
+            monkeypatch.setattr("builtins.input", lambda _: "y")
+            cli_mod.restore(path=backup_path, force=False)
+            assert os.path.isfile(test_file), "File should be restored"
+            with open(test_file) as f:
+                assert f.read() == "hello"
+        finally:
+            monkeypatch.setattr(cli_mod, "PROJECT_ROOT", old_project_root)
+
+
+class TestDeleteCommands:
+    def test_delete_dataset(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+
+        fake_data_dir = str(tmp_path / "data")
+        os.makedirs(fake_data_dir)
+        dsi = os.path.join(fake_data_dir, "dataset_info.json")
+        with open(dsi, "w") as f:
+            json.dump({"test_ds": {"file_name": "data.json", "formatting": "alpaca"}}, f)
+        with open(os.path.join(fake_data_dir, "data.json"), "w") as f:
+            f.write("[]")
+
+        old_dsi = cli_mod.DATASET_INFO
+        old_data = cli_mod.DATA_DIR
+        monkeypatch.setattr(cli_mod, "DATASET_INFO", dsi)
+        monkeypatch.setattr(cli_mod, "DATA_DIR", fake_data_dir)
+        monkeypatch.setattr(cli_mod, "console", _dummy_console())
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+
+        try:
+            cli_mod.delete_dataset("test_ds", keep_files=False, force=False)
+            with open(dsi) as f:
+                registry = json.load(f)
+            assert "test_ds" not in registry
+            assert not os.path.isfile(os.path.join(fake_data_dir, "data.json"))
+        finally:
+            monkeypatch.setattr(cli_mod, "DATASET_INFO", old_dsi)
+            monkeypatch.setattr(cli_mod, "DATA_DIR", old_data)
+
+    def test_delete_run(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+        import phronis.state as state_mod
+
+        fd, temp_path = tempfile.mkstemp(suffix=".yaml")
+        os.close(fd)
+        old_path = state_mod.STATE_PATH
+        state_mod.STATE_PATH = temp_path
+        state_mod._state = None
+
+        fake_saves = str(tmp_path / "saves" / "run1")
+        fake_configs = str(tmp_path / "configs")
+        os.makedirs(fake_saves)
+        os.makedirs(fake_configs)
+        cfg_file = os.path.join(fake_configs, "run1.yaml")
+        with open(cfg_file, "w") as f:
+            f.write("output_dir: run1")
+
+        old_saves = cli_mod.SAVES_DIR
+        old_configs = cli_mod.CONFIGS_DIR
+        monkeypatch.setattr(cli_mod, "SAVES_DIR", tmp_path / "saves")
+        monkeypatch.setattr(cli_mod, "CONFIGS_DIR", fake_configs)
+        monkeypatch.setattr(cli_mod, "console", _dummy_console())
+        monkeypatch.setattr("builtins.input", lambda _: "y")
+
+        try:
+            state = state_mod.get_state()
+            state.training_history = [{"name": "run1", "model": "m"}]
+            state.save()
+
+            cli_mod.delete_run("run1", force=False)
+            assert not os.path.isdir(fake_saves)
+            assert not os.path.isfile(cfg_file)
+            state = state_mod.get_state()
+            assert not any(h.get("name") == "run1" for h in state.training_history)
+        finally:
+            state_mod.STATE_PATH = old_path
+            state_mod._state = None
+            monkeypatch.setattr(cli_mod, "SAVES_DIR", old_saves)
+            monkeypatch.setattr(cli_mod, "CONFIGS_DIR", old_configs)
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+
+class TestLogsCommand:
+    def test_logs_shows_log_file(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+
+        fake_run = str(tmp_path / "saves" / "run1")
+        os.makedirs(fake_run)
+        log_file = os.path.join(fake_run, "training.log")
+        lines = [f"Epoch {i}\n" for i in range(10)]
+        with open(log_file, "w") as f:
+            f.writelines(lines)
+
+        old_saves = cli_mod.SAVES_DIR
+        monkeypatch.setattr(cli_mod, "SAVES_DIR", tmp_path / "saves")
+        console = _dummy_console()
+        monkeypatch.setattr(cli_mod, "console", console)
+
+        try:
+            cli_mod.logs("run1", tail=5)
+            output = console.file.getvalue()
+            assert "Epoch 5" in output or "Epoch 9" in output
+        finally:
+            monkeypatch.setattr(cli_mod, "SAVES_DIR", old_saves)
+
+
+class TestEvaluateServeConvert:
+    def test_evaluate_checks_adapter_exists(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+
+        fake_saves = str(tmp_path / "saves")
+        monkeypatch.setattr(cli_mod, "SAVES_DIR", fake_saves)
+        console = _dummy_console()
+        monkeypatch.setattr(cli_mod, "console", console)
+
+        try:
+            cli_mod.evaluate(adapter="nonexistent", dataset="test", template=None, output=None)
+            assert False, "Should have exited"
+        except Exception:
+            pass
+        output = console.file.getvalue()
+        assert "Adapter not found" in output, f"Expected error message in output. Got: {output}"
+
+    def test_serve_checks_model_exists(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+
+        fake_models = str(tmp_path / "models")
+        monkeypatch.setattr(cli_mod, "MODELS_DIR", fake_models)
+        console = _dummy_console()
+        monkeypatch.setattr(cli_mod, "console", console)
+
+        try:
+            cli_mod.serve(model="nonexistent", backend="vllm", port=8000)
+            assert False, "Should have exited"
+        except Exception:
+            pass
+        output = console.file.getvalue()
+        assert "Model not found" in output, f"Expected error message in output. Got: {output}"
+
+    def test_convert_checks_model_exists(self, monkeypatch, tmp_path):
+        import phronis.cli as cli_mod
+
+        fake_models = str(tmp_path / "models")
+        monkeypatch.setattr(cli_mod, "MODELS_DIR", fake_models)
+        console = _dummy_console()
+        monkeypatch.setattr(cli_mod, "console", console)
+
+        try:
+            cli_mod.convert(model="nonexistent", format="gguf", output=None)
+            assert False, "Should have exited"
+        except Exception:
+            pass
+        output = console.file.getvalue()
+        assert "Model not found" in output, f"Expected error message in output. Got: {output}"
