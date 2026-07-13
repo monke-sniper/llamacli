@@ -317,6 +317,125 @@ class TestAddDatasetScreen:
                 phronis.DATASET_INFO = old_dsi
 
 
+class TestDatasetColumnsMapping:
+    def test_sharegpt_messages_key_gets_columns(self, monkeypatch, tmp_path):
+        import phronis.hf as hf_mod
+        import phronis
+
+        fake_data_dir = str(tmp_path / "data")
+        os.makedirs(fake_data_dir)
+        dsi = os.path.join(fake_data_dir, "dataset_info.json")
+
+        # Simulate a downloaded dataset folder with a JSON file using "messages" key
+        dl_dir = str(tmp_path / "dl")
+        os.makedirs(dl_dir)
+        with open(os.path.join(dl_dir, "data.json"), "w") as f:
+            json.dump([
+                {"messages": [{"role": "user", "content": "hi"}]}
+            ], f)
+
+        old_data_dir = phronis.DATA_DIR
+        old_dsi = phronis.DATASET_INFO
+        monkeypatch.setattr(phronis, "DATA_DIR", fake_data_dir)
+        monkeypatch.setattr(phronis, "DATASET_INFO", dsi)
+
+        try:
+            console = _dummy_console()
+            hf_mod._register_downloaded_dataset(console, "org/ds", "chat_ds", dl_dir)
+            with open(dsi) as f:
+                registry = json.load(f)
+            assert "chat_ds" in registry
+            assert registry["chat_ds"]["formatting"] == "sharegpt"
+            assert "columns" in registry["chat_ds"]
+            assert registry["chat_ds"]["columns"]["messages"] == "messages"
+        finally:
+            monkeypatch.setattr(phronis, "DATA_DIR", old_data_dir)
+            monkeypatch.setattr(phronis, "DATASET_INFO", old_dsi)
+
+    def test_sharegpt_conversations_key_gets_columns(self, monkeypatch, tmp_path):
+        import phronis.hf as hf_mod
+        import phronis
+
+        fake_data_dir = str(tmp_path / "data")
+        os.makedirs(fake_data_dir)
+        dsi = os.path.join(fake_data_dir, "dataset_info.json")
+
+        dl_dir = str(tmp_path / "dl")
+        os.makedirs(dl_dir)
+        with open(os.path.join(dl_dir, "data.json"), "w") as f:
+            json.dump([
+                {"conversations": [{"role": "user", "content": "hi"}]}
+            ], f)
+
+        old_data_dir = phronis.DATA_DIR
+        old_dsi = phronis.DATASET_INFO
+        monkeypatch.setattr(phronis, "DATA_DIR", fake_data_dir)
+        monkeypatch.setattr(phronis, "DATASET_INFO", dsi)
+
+        try:
+            console = _dummy_console()
+            hf_mod._register_downloaded_dataset(console, "org/ds", "chat_ds", dl_dir)
+            with open(dsi) as f:
+                registry = json.load(f)
+            assert "chat_ds" in registry
+            assert registry["chat_ds"]["formatting"] == "sharegpt"
+            assert "columns" in registry["chat_ds"]
+            assert registry["chat_ds"]["columns"]["messages"] == "conversations"
+        finally:
+            monkeypatch.setattr(phronis, "DATA_DIR", old_data_dir)
+            monkeypatch.setattr(phronis, "DATASET_INFO", old_dsi)
+
+    def test_alpaca_format_no_columns(self, monkeypatch, tmp_path):
+        import phronis.hf as hf_mod
+        import phronis
+
+        fake_data_dir = str(tmp_path / "data")
+        os.makedirs(fake_data_dir)
+        dsi = os.path.join(fake_data_dir, "dataset_info.json")
+
+        dl_dir = str(tmp_path / "dl")
+        os.makedirs(dl_dir)
+        with open(os.path.join(dl_dir, "data.json"), "w") as f:
+            json.dump([
+                {"instruction": "test", "output": "result"}
+            ], f)
+
+        old_data_dir = phronis.DATA_DIR
+        old_dsi = phronis.DATASET_INFO
+        monkeypatch.setattr(phronis, "DATA_DIR", fake_data_dir)
+        monkeypatch.setattr(phronis, "DATASET_INFO", dsi)
+
+        try:
+            console = _dummy_console()
+            hf_mod._register_downloaded_dataset(console, "org/ds", "alpaca_ds", dl_dir)
+            with open(dsi) as f:
+                registry = json.load(f)
+            assert "alpaca_ds" in registry
+            assert registry["alpaca_ds"]["formatting"] == "alpaca"
+            assert "columns" not in registry["alpaca_ds"]
+        finally:
+            monkeypatch.setattr(phronis, "DATA_DIR", old_data_dir)
+            monkeypatch.setattr(phronis, "DATASET_INFO", old_dsi)
+
+    def test_detect_format_returns_tuple(self):
+        from phronis.prompts import _detect_format
+        fmt, cols = _detect_format([{"messages": []}])
+        assert fmt == "sharegpt"
+        assert cols == {"messages": "messages"}
+
+        fmt, cols = _detect_format([{"conversations": []}])
+        assert fmt == "sharegpt"
+        assert cols == {"messages": "conversations"}
+
+        fmt, cols = _detect_format([{"instruction": "x", "output": "y"}])
+        assert fmt == "alpaca"
+        assert cols is None
+
+        fmt, cols = _detect_format(None)
+        assert fmt is None
+        assert cols is None
+
+
 class TestLogo:
     def test_logo_returns_text(self):
         from phronis.logo import get_logo_text
