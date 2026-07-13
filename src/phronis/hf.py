@@ -260,6 +260,15 @@ def _show_file_sizes(console: Console, repo_id: str, repo_type: str = "model") -
     return confirmed if confirmed is not None else False
 
 
+def _make_rich_tqdm(console):
+    """Return a RichTqdm subclass that hardcodes the console instance."""
+    class _RichTqdm(RichTqdm):
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("console", console)
+            super().__init__(*args, **kwargs)
+    return _RichTqdm
+
+
 def download_model(console: Console, model_id: str, cache_dir: str | None = None) -> str | None:
     if not _check_hf(console):
         return None
@@ -270,13 +279,10 @@ def download_model(console: Console, model_id: str, cache_dir: str | None = None
 
     console.print(f"\n[bold]Downloading {model_id}...[/]\n")
     try:
-        def _tqdm_factory(*args, **kwargs):
-            return RichTqdm(*args, console=console, **kwargs)
-
         path = snapshot_download(
             model_id,
             cache_dir=cache_dir,
-            tqdm_class=_tqdm_factory,
+            tqdm_class=_make_rich_tqdm(console),
         )
         console.print()
         console.print(f"[green]Downloaded to: {path}[/]")
@@ -308,14 +314,11 @@ def download_dataset(console: Console, dataset_id: str, local_dir: str | None = 
 
     console.print(f"\n[bold]Downloading dataset {dataset_id}...[/]\n")
     try:
-        def _tqdm_factory(*args, **kwargs):
-            return RichTqdm(*args, console=console, **kwargs)
-
         path = snapshot_download(
             dataset_id,
             repo_type="dataset",
             local_dir=local_dir,
-            tqdm_class=_tqdm_factory,
+            tqdm_class=_make_rich_tqdm(console),
         )
         console.print()
         console.print(f"[green]Dataset downloaded to: {path}[/]")

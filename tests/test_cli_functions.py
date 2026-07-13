@@ -281,6 +281,17 @@ class TestHfDownload:
         console = _dummy_console()
         assert _check_hf(console) == _HF_AVAILABLE
 
+    def test_make_rich_tqdm_returns_class_with_get_lock(self):
+        """Regression test: snapshot_download expects a class, not a function."""
+        from phronis.hf import _make_rich_tqdm
+        console = _dummy_console()
+        cls = _make_rich_tqdm(console)
+        assert isinstance(cls, type), "_make_rich_tqdm must return a class, not a function"
+        assert hasattr(cls, "get_lock"), "Returned class must have get_lock (tqdm requirement)"
+        # Ensure instantiating it doesn't crash and console is wired in
+        instance = cls(total=100)
+        assert instance._rich_console is console
+
 
 class TestAddDatasetScreen:
     def test_add_dataset_creates_entry(self):
