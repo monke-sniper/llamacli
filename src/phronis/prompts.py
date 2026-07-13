@@ -209,9 +209,125 @@ def _detect_format(data):
     return None, None
 
 
+def _cleanup_stale_datasets() -> None:
+    """Remove registry entries whose data files no longer exist."""
+    if not os.path.isfile(DATASET_INFO):
+        return
+    try:
+        with open(DATASET_INFO, "r", encoding="utf-8") as f:
+            registry = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return
+
+    cleaned = {}
+    for name, info in registry.items():
+        file_name = info.get("file_name", "")
+        if file_name:
+            fpath = os.path.join(DATA_DIR, file_name)
+            if os.path.isfile(fpath):
+                cleaned[name] = info
+            # else: file gone → drop entry
+        else:
+            # hf_hub_url entries have no local file; keep them
+            cleaned[name] = info
+
+    if len(cleaned) != len(registry):
+        try:
+            with open(DATASET_INFO, "w", encoding="utf-8") as f:
+                json.dump(cleaned, f, indent=2, ensure_ascii=False)
+        except OSError:
+            pass
+
+
+def _ensure_dataset_registered(name: str) -> bool:
+    """Register a dataset by scanning DATA_DIR for a matching JSON/JSONL file.
+
+    Returns True if the dataset is now registered (or was already), False otherwise.
+    """
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    # Ensure dataset_info.json exists with valid JSON
+    if not os.path.isfile(DATASET_INFO):
+        try:
+            with open(DATASET_INFO, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+        except OSError:
+            pass
+
+    # Check if already registered
+    registry = {}
+    if os.path.isfile(DATASET_INFO):
+        try:
+            with open(DATASET_INFO, "r", encoding="utf-8") as f:
+                registry = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            registry = {}
+
+    if name in registry:
+        return True
+
+    # Scan DATA_DIR for a matching file
+    candidates = [f"{name}.json", f"{name}.jsonl"]
+    for cand in candidates:
+        fpath = os.path.join(DATA_DIR, cand)
+        if os.path.isfile(fpath):
+            # Detect format
+            try:
+                if cand.endswith(".jsonl"):
+                    with open(fpath, "r", encoding="utf-8-sig") as f:
+                        first_line = f.readline().strip()
+                    if first_line:
+                        first = json.loads(first_line)
+                        if "instruction" in first and "output" in first:
+                            fmt = "alpaca"
+                            cols = None
+                        elif "messages" in first:
+                            fmt = "sharegpt"
+                            cols = {"messages": "messages"}
+                        elif "conversations" in first:
+                            fmt = "sharegpt"
+                            cols = {"messages": "conversations"}
+                        else:
+                            continue
+                    else:
+                        continue
+                else:
+                    with open(fpath, "r", encoding="utf-8-sig") as f:
+                        data = json.load(f)
+                    if not isinstance(data, list) or len(data) == 0:
+                        continue
+                    fmt, cols = _detect_format(data)
+                if not fmt:
+                    continue
+
+                entry = {"file_name": cand, "formatting": fmt}
+                if cols:
+                    entry["columns"] = cols
+                registry[name] = entry
+                with open(DATASET_INFO, "w", encoding="utf-8") as f:
+                    json.dump(registry, f, indent=2, ensure_ascii=False)
+                return True
+            except Exception:
+                pass
+
+    return False
+
+
 def _list_datasets():
     datasets = {}
     os.makedirs(DATA_DIR, exist_ok=True)
+
+    # Auto-create empty dataset_info.json if missing
+    if not os.path.isfile(DATASET_INFO):
+        try:
+            with open(DATASET_INFO, "w", encoding="utf-8") as f:
+                json.dump({}, f)
+        except OSError:
+            pass
+
+    # Remove stale entries first
+    _cleanup_stale_datasets()
+
     if os.path.isfile(DATASET_INFO):
         try:
             with open(DATASET_INFO, "r", encoding="utf-8") as f:

@@ -34,6 +34,7 @@ from .logo import print_logo
 from .repro import gather_repro_metadata, format_repro_header
 from .prompts import (
     _count_dataset,
+    _ensure_dataset_registered,
     _list_cached_models,
     _list_datasets,
     detect_template,
@@ -143,6 +144,12 @@ def _compute_dtype_flags() -> dict[str, bool]:
 
 
 def _build_config(model: str, template: str, dataset: str, epochs: float, finetuning_type: str, params: dict[str, Any], output_name: str, target_loss: float | None = None) -> dict[str, Any]:
+    # Auto-register dataset if it's just a loose JSON file in DATA_DIR
+    for ds_name in dataset.split(","):
+        ds_name = ds_name.strip()
+        if ds_name:
+            _ensure_dataset_registered(ds_name)
+
     config = {
         "model_name_or_path": model,
         "template": template,
@@ -1144,6 +1151,12 @@ def train(
     method: str = typer.Option("lora", "--method", help="Finetuning method: lora/full/freeze"),
     target_loss: float = typer.Option(None, "--target-loss", help="Stop training when loss reaches approximately this value"),
 ) -> None:
+    # Auto-register dataset if it's just a loose JSON file in DATA_DIR
+    for ds_name in dataset.split(","):
+        ds_name = ds_name.strip()
+        if ds_name:
+            _ensure_dataset_registered(ds_name)
+
     output_name = output or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     config = {
         "model_name_or_path": model,
