@@ -186,27 +186,63 @@ def detect_template(repo_id):
 def _detect_format(data):
     """Detect dataset format from data content.
 
-    Returns a tuple (format, columns) where:
+    Returns a tuple (format, columns, tags) where:
       - format is 'alpaca' or 'sharegpt'
       - columns is None for alpaca, or {"messages": key_name} for sharegpt
-        (key_name is the actual JSON key used: 'messages' or 'conversations')
+      - tags is None for alpaca, or a dict of sharegpt tags for sharegpt
     """
     if not isinstance(data, list) or len(data) == 0:
-        return None, None
+        return None, None, None
     first = data[0]
     if not isinstance(first, dict):
-        return None, None
+        return None, None, None
     if "instruction" in first and "output" in first:
-        return "alpaca", None
+        return "alpaca", None, None
     if "messages" in first:
-        return "sharegpt", {"messages": "messages"}
+        messages = first["messages"]
+        if messages and isinstance(messages[0], dict):
+            if "role" in messages[0]:
+                return "sharegpt", {"messages": "messages"}, {
+                    "role_tag": "role",
+                    "content_tag": "content",
+                    "user_tag": "user",
+                    "assistant_tag": "assistant",
+                    "system_tag": "system",
+                }
+            if "from" in messages[0]:
+                return "sharegpt", {"messages": "messages"}, {
+                    "role_tag": "from",
+                    "content_tag": "value",
+                    "user_tag": "human",
+                    "assistant_tag": "gpt",
+                    "system_tag": "system",
+                }
+        return "sharegpt", {"messages": "messages"}, None
     if "conversations" in first:
-        return "sharegpt", {"messages": "conversations"}
+        messages = first["conversations"]
+        if messages and isinstance(messages[0], dict):
+            if "role" in messages[0]:
+                return "sharegpt", {"messages": "conversations"}, {
+                    "role_tag": "role",
+                    "content_tag": "content",
+                    "user_tag": "user",
+                    "assistant_tag": "assistant",
+                    "system_tag": "system",
+                }
+            if "from" in messages[0]:
+                return "sharegpt", {"messages": "conversations"}, {
+                    "role_tag": "from",
+                    "content_tag": "value",
+                    "user_tag": "human",
+                    "assistant_tag": "gpt",
+                    "system_tag": "system",
+                }
+        return "sharegpt", {"messages": "conversations"}, None
     if "prompt" in first and "completion" in first:
-        return "alpaca", None
+        return "alpaca", None, None
     if "text" in first:
-        return "alpaca", None
-    return None, None
+        return "alpaca", None, None
+    return None, None, None
 
 
 def _cleanup_stale_datasets() -> None:
@@ -273,6 +309,9 @@ def _ensure_dataset_registered(name: str) -> bool:
         if os.path.isfile(fpath):
             # Detect format
             try:
+                fmt = None
+                cols = None
+                tags = None
                 if cand.endswith(".jsonl"):
                     with open(fpath, "r", encoding="utf-8-sig") as f:
                         first_line = f.readline().strip()
@@ -281,28 +320,94 @@ def _ensure_dataset_registered(name: str) -> bool:
                         if "instruction" in first and "output" in first:
                             fmt = "alpaca"
                             cols = None
-                        elif "messages" in first:
+                        elif "messages" in first or "conversations" in first:
                             fmt = "sharegpt"
-                            cols = {"messages": "messages"}
-                        elif "conversations" in first:
-                            fmt = "sharegpt"
-                            cols = {"messages": "conversations"}
+                            msg_key = "messages" if "messages" in first else "conversations"
+                            cols = {"messages": msg_key}
+                            msgs = first.get(msg_key, [])
+                            if msgs and isinstance(msgs[0], dict):
+                                if "role" in msgs[0]:
+                                    tags = {
+                                        "role_tag": "role",
+                                        "content_tag": "content",
+                                        "user_tag": "user",
+                                        "assistant_tag": "assistant",
+                                        "system_tag": "system",
+                                    }
+                                elif "from" in msgs[0]:
+                                    tags = {
+                                        "role_tag": "from",
+                                        "content_tag": "value",
+                                        "user_tag": "human",
+                                        "assistant_tag": "gpt",
+                                        "system_tag": "system",
+                                    }
+                        elif "prompt" in first and "completion" in first:
+                            fmt = "alpaca"
+                            cols = None
+                        elif "text" in first:
+                            fmt = "alpaca"
+                            cols = None
                         else:
                             continue
                     else:
                         continue
                 else:
-                    with open(fpath, "r", encoding="utf-8-sig") as f:
-                        data = json.load(f)
-                    if not isinstance(data, list) or len(data) == 0:
-                        continue
-                    fmt, cols = _detect_format(data)
-                if not fmt:
-                    continue
+                    try:
+                        with open(fpath, "r", encoding="utf-8-sig") as f:
+                            data = json.load(f)
+                        if not isinstance(data, list) or len(data) == 0:
+                            continue
+                        fmt, cols, tags = _detect_format(data)
+                    except (json.JSONDecodeError, OSError):
+                        # Fallback: might be JSONL with .json extension
+                        try:
+                            with open(fpath, "r", encoding="utf-8-sig") as f:
+                                first_line = f.readline().strip()
+                            if first_line:
+                                first = json.loads(first_line)
+                                if isinstance(first, dict):
+                                    if "instruction" in first and "output" in first:
+                                        fmt = "alpaca"
+                                        cols = None
+                                    elif "messages" in first or "conversations" in first:
+                                        fmt = "sharegpt"
+                                        msg_key = "messages" if "messages" in first else "conversations"
+                                        cols = {"messages": msg_key}
+                                        msgs = first.get(msg_key, [])
+                                        if msgs and isinstance(msgs[0], dict):
+                                            if "role" in msgs[0]:
+                                                tags = {
+                                                    "role_tag": "role",
+                                                    "content_tag": "content",
+                                                    "user_tag": "user",
+                                                    "assistant_tag": "assistant",
+                                                    "system_tag": "system",
+                                                }
+                                            elif "from" in msgs[0]:
+                                                tags = {
+                                                    "role_tag": "from",
+                                                    "content_tag": "value",
+                                                    "user_tag": "human",
+                                                    "assistant_tag": "gpt",
+                                                    "system_tag": "system",
+                                                }
+                                    elif "prompt" in first and "completion" in first:
+                                        fmt = "alpaca"
+                                        cols = None
+                                    elif "text" in first:
+                                        fmt = "alpaca"
+                                        cols = None
+                        except Exception:
+                            pass
+                        if not fmt:
+                            continue
 
                 entry = {"file_name": cand, "formatting": fmt}
                 if cols:
                     entry["columns"] = cols
+                if tags:
+                    entry["tags"] = tags
                 registry[name] = entry
                 with open(DATASET_INFO, "w", encoding="utf-8") as f:
                     json.dump(registry, f, indent=2, ensure_ascii=False)
@@ -354,7 +459,7 @@ def _list_datasets():
             try:
                 with open(fpath, "r", encoding="utf-8-sig") as f:
                     data = json.load(f)
-                fmt, cols = _detect_format(data)
+                fmt, cols, tags = _detect_format(data)
                 if fmt:
                     datasets[name] = {
                         "name": name,
@@ -362,7 +467,21 @@ def _list_datasets():
                         "source": "auto",
                     }
             except (json.JSONDecodeError, OSError):
-                pass
+                # Fallback: might be JSONL with .json extension
+                try:
+                    with open(fpath, "r", encoding="utf-8-sig") as f:
+                        first_line = f.readline().strip()
+                    if first_line:
+                        first = json.loads(first_line)
+                        if isinstance(first, dict):
+                            if "instruction" in first and "output" in first:
+                                datasets[name] = {"name": name, "format": "alpaca", "source": "auto"}
+                            elif "messages" in first:
+                                datasets[name] = {"name": name, "format": "sharegpt", "source": "auto"}
+                            elif "conversations" in first:
+                                datasets[name] = {"name": name, "format": "sharegpt", "source": "auto"}
+                except (json.JSONDecodeError, OSError):
+                    pass
         elif fname.endswith(".jsonl"):
             try:
                 with open(fpath, "r", encoding="utf-8-sig") as f:
@@ -408,6 +527,13 @@ def _count_dataset(name):
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 return len(data) if isinstance(data, list) else 1
+            except (json.JSONDecodeError, OSError):
+                # Fallback: might be JSONL with .json extension
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        return sum(1 for line in f if line.strip())
+                except Exception:
+                    return 0
             except Exception:
                 return 0
 
@@ -426,6 +552,13 @@ def _count_dataset(name):
                     with open(fpath, "r", encoding="utf-8") as f:
                         data = json.load(f)
                     return len(data) if isinstance(data, list) else 1
+                except (json.JSONDecodeError, OSError):
+                    # Fallback: might be JSONL with .json extension
+                    try:
+                        with open(fpath, "r", encoding="utf-8") as f:
+                            return sum(1 for line in f if line.strip())
+                    except Exception:
+                        pass
                 except Exception:
                     pass
     return 0
@@ -461,11 +594,25 @@ def _list_demo_datasets():
             try:
                 with open(fpath, "r", encoding="utf-8-sig") as f:
                     data = json.load(f)
-                fmt, cols = _detect_format(data)
+                fmt, cols, tags = _detect_format(data)
                 if fmt:
                     datasets[name] = {"name": name, "format": fmt, "source": "demo"}
             except (json.JSONDecodeError, OSError):
-                pass
+                # Fallback: might be JSONL with .json extension
+                try:
+                    with open(fpath, "r", encoding="utf-8-sig") as f:
+                        first_line = f.readline().strip()
+                    if first_line:
+                        first = json.loads(first_line)
+                        if isinstance(first, dict):
+                            if "instruction" in first and "output" in first:
+                                datasets[name] = {"name": name, "format": "alpaca", "source": "demo"}
+                            elif "messages" in first:
+                                datasets[name] = {"name": name, "format": "sharegpt", "source": "demo"}
+                            elif "conversations" in first:
+                                datasets[name] = {"name": name, "format": "sharegpt", "source": "demo"}
+                except (json.JSONDecodeError, OSError):
+                    pass
         elif fname.endswith(".jsonl"):
             try:
                 with open(fpath, "r", encoding="utf-8-sig") as f:

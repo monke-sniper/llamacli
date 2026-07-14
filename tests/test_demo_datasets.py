@@ -15,7 +15,7 @@ class TestDemoDatasetHelpers:
         datasets = _list_demo_datasets()
         assert isinstance(datasets, list)
         names = [d["name"] for d in datasets]
-        assert "demo_alpaca" in names
+        assert "identity" in names
         assert "demo_chat" in names
 
     def test_demo_datasets_have_required_keys(self):

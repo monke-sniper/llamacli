@@ -419,19 +419,20 @@ class TestDatasetColumnsMapping:
 
     def test_detect_format_returns_tuple(self):
         from phronis.prompts import _detect_format
-        fmt, cols = _detect_format([{"messages": []}])
+        fmt, cols, tags = _detect_format([{"messages": []}])
         assert fmt == "sharegpt"
         assert cols == {"messages": "messages"}
 
-        fmt, cols = _detect_format([{"conversations": []}])
+        fmt, cols, tags = _detect_format([{"conversations": []}])
         assert fmt == "sharegpt"
         assert cols == {"messages": "conversations"}
 
-        fmt, cols = _detect_format([{"instruction": "x", "output": "y"}])
+        fmt, cols, tags = _detect_format([{"instruction": "x", "output": "y"}])
         assert fmt == "alpaca"
         assert cols is None
+        assert tags is None
 
-        fmt, cols = _detect_format(None)
+        fmt, cols, tags = _detect_format(None)
         assert fmt is None
         assert cols is None
 
