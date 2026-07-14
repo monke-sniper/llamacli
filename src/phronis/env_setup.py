@@ -163,7 +163,7 @@ def ensure_isolated_venv(console: Console) -> bool:
     venv_pip = _venv_pip()
 
     # Phase 1 — create venv if it doesn't exist yet.
-    if not os.path.isfile(venv_py) or not os.path.isfile(venv_pip):
+    if not os.path.isfile(venv_py):
         py_exe = _find_compatible_python()
         if not py_exe:
             console.print(
@@ -194,28 +194,53 @@ def ensure_isolated_venv(console: Console) -> bool:
     if not missing_pkgs:
         return True
 
+    # Before installing anything, make sure pip actually works in the venv
+    # (some Windows venvs ship a broken pip.exe wrapper).
+    try:
+        subprocess.run(
+            [venv_py, "-m", "ensurepip", "--upgrade"],
+            capture_output=True, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+
+    try:
+        pip_check = subprocess.run(
+            [venv_py, "-m", "pip", "--version"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pip_check = None
+
+    if pip_check is None or pip_check.returncode != 0:
+        console.print(
+            "[red]pip is not working inside the isolated venv. "
+            "This usually means the base Python was installed without pip.[/]"
+        )
+        console.print("[dim]Re-install Python 3.12 with pip enabled and try again.[/]")
+        return False
+
     console.print(
         f"[dim]Repairing isolated environment (missing: {', '.join(missing_pkgs)})...[/]"
     )
 
-    # Upgrade pip
+    # Upgrade pip using python -m pip (more reliable than pip.exe wrapper)
     try:
         with console.status("[bold green]Upgrading pip...", spinner="dots"):
-            result = subprocess.run(
-                [venv_pip, "install", "--upgrade", "pip"],
+            subprocess.run(
+                [venv_py, "-m", "pip", "install", "--upgrade", "pip"],
                 capture_output=True, text=True, timeout=120,
             )
-        if result.returncode != 0:
-            console.print("[yellow]Warning: pip upgrade failed in isolated venv. Continuing with bundled pip.[/]")
     except subprocess.TimeoutExpired:
-        console.print("[yellow]Warning: pip upgrade timed out. Continuing with bundled pip.[/]")
+        console.print("[yellow]Warning: pip upgrade timed out.[/]")
 
     # Install torch with CUDA
     try:
         with console.status("[bold green]Installing CUDA PyTorch... (this may take several minutes)", spinner="dots"):
             subprocess.run(
                 [
-                    venv_pip, "install", "torch", "torchvision", "torchaudio",
+                    venv_py, "-m", "pip", "install",
+                    "torch", "torchvision", "torchaudio",
                     "--index-url", "https://download.pytorch.org/whl/cu124",
                 ],
                 check=True, timeout=900,
@@ -232,12 +257,12 @@ def ensure_isolated_venv(console: Console) -> bool:
         with console.status("[bold green]Installing phronis into isolated environment...", spinner="dots"):
             if repo_root:
                 subprocess.run(
-                    [venv_pip, "install", "-e", repo_root],
+                    [venv_py, "-m", "pip", "install", "-e", repo_root],
                     check=True, timeout=300,
                 )
             else:
                 subprocess.run(
-                    [venv_pip, "install", "phronis"],
+                    [venv_py, "-m", "pip", "install", "phronis"],
                     check=True, timeout=300,
                 )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -267,7 +292,7 @@ def ensure_isolated_venv(console: Console) -> bool:
             try:
                 subprocess.run(
                     [
-                        venv_pip, "install", "--force-reinstall",
+                        venv_py, "-m", "pip", "install", "--force-reinstall",
                         "torch", "torchvision", "torchaudio",
                         "--index-url", "https://download.pytorch.org/whl/cu124",
                     ],
