@@ -105,7 +105,6 @@ SMART_DEFAULTS = {
     "finetuning_type": "lora",
     "cutoff_len": 512,
     "max_samples": 10000,
-    "preprocessing_num_workers": 8,
     "per_device_train_batch_size": 2,
     "gradient_accumulation_steps": 8,
     "learning_rate": 1e-4,
@@ -143,6 +142,39 @@ def _compute_dtype_flags() -> dict[str, bool]:
         return {"bf16": False}
 
 
+def _get_workers_and_pin_memory() -> dict[str, Any]:
+    """Return preprocessing workers and pin_memory based on platform + GPU.
+
+    Windows multiprocessing with datasets frequently deadlocks during
+    preprocessing, so we force single-threaded preprocessing on Windows
+    (especially on CPU).  On Linux/macOS with GPU we keep the default 8.
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return {"preprocessing_num_workers": 8, "dataloader_pin_memory": True}
+    except Exception:
+        pass
+    if os.name == "nt":  # Windows
+        return {"preprocessing_num_workers": 0, "dataloader_pin_memory": False}
+    return {"preprocessing_num_workers": 8, "dataloader_pin_memory": True}
+
+
+def _warn_if_cpu_only(console: Console) -> None:
+    """Print a warning when PyTorch is CPU-only so the user knows to reinstall."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return
+    except Exception:
+        return
+    console.print("[yellow]WARNING: PyTorch is running on CPU. Training will be very slow.[/]")
+    console.print("[dim]If you have an NVIDIA GPU, reinstall CUDA PyTorch:[/]")
+    console.print("[dim]  pip uninstall torch torchvision torchaudio -y[/]")
+    console.print("[dim]  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124[/]")
+    console.print()
+
+
 def _build_config(model: str, template: str, dataset: str, epochs: float, finetuning_type: str, params: dict[str, Any], output_name: str, target_loss: float | None = None) -> dict[str, Any]:
     # Auto-register dataset if it's just a loose JSON file in DATA_DIR
     for ds_name in dataset.split(","):
@@ -159,6 +191,7 @@ def _build_config(model: str, template: str, dataset: str, epochs: float, finetu
     }
     config.update(SMART_DEFAULTS)
     config.update(_compute_dtype_flags())
+    config.update(_get_workers_and_pin_memory())
     config["num_train_epochs"] = epochs
     config["finetuning_type"] = finetuning_type
 
@@ -1172,7 +1205,6 @@ def train(
         "template": template,
         "cutoff_len": cutoff,
         "max_samples": 10000,
-        "preprocessing_num_workers": 8,
         "output_dir": f"saves/{output_name}/lora",
         "logging_steps": 5,
         "save_steps": 100,
@@ -1186,6 +1218,7 @@ def train(
         "lr_scheduler_type": scheduler,
         "warmup_ratio": warmup,
         **_compute_dtype_flags(),
+        **_get_workers_and_pin_memory(),
     }
     if target_loss is not None:
         config["save_steps"] = 1
@@ -1202,6 +1235,8 @@ def train(
         "method": method, "grad_accum": grad_accum, "scheduler": scheduler,
         "warmup": warmup,
     }
+
+    _warn_if_cpu_only(console)
 
     if dry_run:
         import yaml
