@@ -6,7 +6,7 @@ import tempfile
 
 class TestSyncDemoDatasets:
     def test_is_noop(self):
-        """sync_demo_datasets is now a no-op because data is centrally managed."""
+        """sync_demo_datasets copies bundled demo datasets into workspace data dir on first run."""
         from phronis.workspace import sync_demo_datasets
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -29,8 +29,8 @@ class TestSyncDemoDatasets:
 
             sync_demo_datasets(bundled_dir, bundled_info, data_dir, workspace_info)
 
-            # Should NOT copy files since the function is a no-op now
-            assert not os.path.isfile(os.path.join(data_dir, "identity.json"))
+            # Copies bundled datasets into workspace on first run so they appear in UI
+            assert os.path.isfile(os.path.join(data_dir, "identity.json"))
 
     def test_skips_when_bundled_dir_missing(self):
         from phronis.workspace import sync_demo_datasets

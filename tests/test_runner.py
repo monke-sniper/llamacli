@@ -88,17 +88,17 @@ class TestMetricsParsing:
         line = "{'loss': '3.35', 'grad_norm': '4.318', 'learning_rate': '9.619e-05', 'epoch': '0.87'}"
         result = _parse_metrics(line)
         assert result is not None
-        assert result["loss"] == "3.35"
-        assert result["grad_norm"] == "4.318"
-        assert result["learning_rate"] == "9.619e-05"
-        assert result["epoch"] == "0.87"
+        assert result["loss"] == 3.35
+        assert result["grad_norm"] == 4.318
+        assert result["learning_rate"] == 9.619e-05
+        assert result["epoch"] == 0.87
 
     def test_parse_metrics_with_extra_keys(self):
         from phronis.runner import _parse_metrics
         line = "{'loss': '2.41', 'grad_norm': '2.25', 'learning_rate': '5.975e-05', 'epoch': '1.70', 'total_flos': '9999GF'}"
         result = _parse_metrics(line)
         assert result is not None
-        assert result["loss"] == "2.41"
+        assert result["loss"] == 2.41
         assert "total_flos" not in result
 
     def test_parse_non_metrics_line(self):
@@ -112,7 +112,7 @@ class TestMetricsParsing:
         line = "INFO {'loss': '1.50', 'grad_norm': '1.0', 'learning_rate': '1e-06', 'epoch': '3.0'} done"
         result = _parse_metrics(line)
         assert result is not None
-        assert result["loss"] == "1.50"
+        assert result["loss"] == 1.5
 
     def test_format_metrics_bar_empty(self):
         from phronis.runner import _format_metrics
@@ -147,12 +147,13 @@ class TestMetricsRe:
         assert parsed["loss"] == 2.1234
 
     def test_matches_string_loss(self):
+        from math import isnan
         from phronis.runner import METRICS_RE, _parse_metrics
         line = "{'loss': 'nan', 'learning_rate': '1e-05'}"
         assert METRICS_RE.search(line) is not None
         parsed = _parse_metrics(line)
         assert parsed is not None
-        assert parsed["loss"] == "nan"
+        assert isnan(parsed["loss"])
 
     def test_skips_plain_text(self):
         from phronis.runner import METRICS_RE, _parse_metrics
