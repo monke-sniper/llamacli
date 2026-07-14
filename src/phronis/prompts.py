@@ -136,10 +136,18 @@ def _get_model_type_for_repo(repo_id):
 
 
 def detect_template(repo_id):
+    lower = repo_id.lower()
+
+    # Check reasoning model names first — these share model_type with base
+    # models (e.g. deepseek-r1-distill-qwen has model_type=qwen2) so the
+    # model_type lookup alone returns the wrong template.
+    if "deepseek-r1" in lower or "deepseekr1" in lower:
+        return "deepseekr1"
+
     model_type = _get_model_type_for_repo(repo_id)
     if model_type and model_type in MODEL_TYPE_TO_TEMPLATE:
         return MODEL_TYPE_TO_TEMPLATE[model_type]
-    lower = repo_id.lower()
+
     if "qwen3" in lower:
         return "qwen3"
     if "qwen2" in lower:
@@ -162,8 +170,6 @@ def detect_template(repo_id):
         return "gemma"
     if "deepseek-v3" in lower or "deepseekv3" in lower:
         return "deepseek3"
-    if "deepseek-r1" in lower or "deepseekr1" in lower:
-        return "deepseekr1"
     if "deepseek-v2" in lower or "deepseekv2" in lower:
         return "deepseek"
     if "deepseek" in lower:

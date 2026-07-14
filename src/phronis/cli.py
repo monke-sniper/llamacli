@@ -514,6 +514,44 @@ def quick_chat(console: Console) -> None:
     _start_chat(console, model, adapter, template)
 
 
+def _strip_thinking_tokens(token_stream):
+    # Yield visible text tokens, skipping thinking blocks from reasoning models.
+    # Reasoning models (DeepSeek-R1, QwQ, etc.) generate internal thinking
+    # tokens wrapped in XML-like tags that should not be shown to the user.
+    OPEN = chr(60) + chr(116) + chr(104) + chr(105) + chr(110) + chr(107) + chr(62)
+    CLOSE = chr(60) + chr(47) + chr(116) + chr(104) + chr(105) + chr(110) + chr(107) + chr(62)
+    accumulated = ""
+    in_think = False
+
+    for token in token_stream:
+        accumulated += token
+
+        while accumulated:
+            if not in_think:
+                start = accumulated.find(OPEN)
+                if start == -1:
+                    safe = max(0, len(accumulated) - (len(OPEN) - 1))
+                    if safe > 0:
+                        yield accumulated[:safe]
+                        accumulated = accumulated[safe:]
+                    break
+                if start > 0:
+                    yield accumulated[:start]
+                accumulated = accumulated[start + len(OPEN):]
+                in_think = True
+            else:
+                end = accumulated.find(CLOSE)
+                if end == -1:
+                    safe = max(0, len(accumulated) - (len(CLOSE) - 1))
+                    accumulated = accumulated[safe:]
+                    break
+                accumulated = accumulated[end + len(CLOSE):]
+                in_think = False
+
+    if accumulated and not in_think:
+        yield accumulated
+
+
 def _start_chat(console: Console, model: str, adapter: str | None, template: str) -> None:
     label = f"{model} + {adapter}" if adapter else model
     console.print(f"\n[bold white]Chat with {label}[/bold white]")
@@ -580,7 +618,7 @@ def _start_chat(console: Console, model: str, adapter: str | None, template: str
         try:
             response = ""
             console.print("[bold green]Assistant:[/] ", end="")
-            for token in chat_model.stream_chat(messages):
+            for token in _strip_thinking_tokens(chat_model.stream_chat(messages)):
                 response += token
                 console.print(token, end="")
             console.print()
@@ -1327,7 +1365,7 @@ def chat(
         console.print("[bold green]Assistant:[/] ", end="")
         try:
             response = ""
-            for token in chat_model.stream_chat(messages):
+            for token in _strip_thinking_tokens(chat_model.stream_chat(messages)):
                 response += token
                 console.print(token, end="")
             console.print()
@@ -1360,7 +1398,7 @@ def chat(
         try:
             response = ""
             console.print("[bold green]Assistant:[/] ", end="")
-            for token in chat_model.stream_chat(messages):
+            for token in _strip_thinking_tokens(chat_model.stream_chat(messages)):
                 response += token
                 console.print(token, end="")
             console.print()
