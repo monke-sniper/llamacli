@@ -252,7 +252,7 @@ def run_training(console: Console, config_path: str, output_name: str, target_lo
     latest_metrics = {}
 
     with Live(
-        Panel("", title=f"[bold]Training - {output_name}[/]", border_style="white"),
+        Panel("", title=f"[bold rgb(255,200,80)]Training - {output_name}[/]", border_style="rgb(255,200,80)"),
         console=console,
         refresh_per_second=8,
         transient=False,
@@ -311,8 +311,8 @@ def run_training(console: Console, config_path: str, output_name: str, target_lo
             live.update(
                 Panel(
                     content,
-                    title=f"[bold]Training - {output_name}[/]",
-                    border_style="white",
+                    title=f"[bold rgb(255,200,80)]Training - {output_name}[/]",
+                    border_style="rgb(255,200,80)",
                 )
             )
             time.sleep(0.12)

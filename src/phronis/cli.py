@@ -12,7 +12,6 @@ from datetime import datetime
 import questionary
 import typer
 import yaml
-from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
@@ -48,13 +47,11 @@ from .prompts import (
 )
 from .runner import run_export, run_training
 from .state import get_state, reload_state
+from .ui.theme import create_themed_console
 
 app = typer.Typer(name="phronis", help="LLaMA-Factory Interactive CLI", add_completion=False)
 
-console = Console(
-    file=io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace"),
-    force_terminal=True,
-)
+console = create_themed_console()
 
 _quiet = False
 _verbose = False
@@ -94,9 +91,9 @@ def show_main_menu() -> str | None:
 
 def _print_breadcrumb(console: Console, title: str, current: int, total: int) -> None:
     parts = []
-    parts.append(f"[bold cyan]{title}[/bold cyan]")
+    parts.append(f"[bold rgb(255,200,80)]{title}[/bold rgb(255,200,80)]")
     parts.append(f"[dim][{current}/{total}][/dim]")
-    console.print(Panel("  ".join(parts), border_style="dim"), highlight=False)
+    console.print(Panel("  ".join(parts), border_style="rgb(180,140,40)"), highlight=False)
     console.print()
 
 
@@ -321,8 +318,8 @@ def quick_train(console: Console) -> None:
             console.print("\n[dim]Using smart defaults: LoRA rank=8, LR=1e-4, batch=2, cutoff=512[/]")
             if data.get("target_loss") is not None:
                 console.print("[dim]Target-loss mode: save_steps=1, logging_steps=1 for precise checkpointing.[/]")
-            table = Table(title="Quick Train Configuration", show_header=False, border_style="white")
-            table.add_column("Key", style="bold white", width=22)
+            table = Table(title="Quick Train Configuration", show_header=False, border_style="rgb(255,200,80)")
+            table.add_column("Key", style="bold rgb(255,200,80)", width=22)
             table.add_column("Value", style="white")
             for k in ("model_name_or_path", "template", "dataset", "num_train_epochs",
                       "finetuning_type", "lora_rank", "learning_rate", "cutoff_len"):
@@ -446,8 +443,8 @@ def advanced_train(console: Console) -> None:
             if data.get("target_loss") is not None:
                 console.print("[dim]Target-loss mode: save_steps=1, logging_steps=1 for precise checkpointing.[/]")
 
-            table = Table(title="Confirm Training Configuration", show_header=False, border_style="white")
-            table.add_column("Key", style="bold white", width=22)
+            table = Table(title="Confirm Training Configuration", show_header=False, border_style="rgb(255,200,80)")
+            table.add_column("Key", style="bold rgb(255,200,80)", width=22)
             table.add_column("Value", style="white")
             for k, v in config.items():
                 table.add_row(k, str(v))
@@ -775,7 +772,7 @@ def view_models_screen(console: Console) -> None:
         console.print("[dim]Models are cached in ~/.cache/huggingface/hub[/]")
         return
 
-    table = Table(show_header=True, header_style="bold white", border_style="white")
+    table = Table(show_header=True, header_style="bold rgb(255,200,80)", border_style="rgb(255,200,80)")
     table.add_column("#", style="dim", width=4)
     table.add_column("Model", style="white")
     table.add_column("Size", style="dim", width=12)
@@ -808,7 +805,7 @@ def view_datasets_screen(console: Console) -> None:
         console.print("[dim]Or use 'Add Dataset' from the menu to register one.[/]")
         return
 
-    table = Table(show_header=True, header_style="bold white", border_style="white")
+    table = Table(show_header=True, header_style="bold rgb(255,200,80)", border_style="rgb(255,200,80)")
     table.add_column("#", style="dim", width=4)
     table.add_column("Dataset", style="white")
     table.add_column("Examples", style="dim", width=10)
@@ -1010,7 +1007,7 @@ def workspace_info_screen(console: Console) -> None:
     console.print(f"[bold]Models dir:[/] [dim]{MODELS_DIR}[/]")
     console.print(f"[bold]Configs dir:[/] [dim]{CONFIGS_DIR}[/]")
 
-    table = Table(show_header=True, header_style="bold white", border_style="white")
+    table = Table(show_header=True, header_style="bold rgb(255,200,80)", border_style="rgb(255,200,80)")
     table.add_column("Directory", style="white")
     table.add_column("Items", style="dim", width=8)
     table.add_column("Size", style="dim", width=12)
@@ -1044,7 +1041,7 @@ def system_check_screen(console: Console) -> None:
 
     console.print("\n[bold white]System Check[/bold white]\n")
 
-    table = Table(show_header=True, header_style="bold white", border_style="white")
+    table = Table(show_header=True, header_style="bold rgb(255,200,80)", border_style="rgb(255,200,80)")
     table.add_column("Check", style="white")
     table.add_column("Status", style="dim", width=12)
     table.add_column("Details", style="dim")
@@ -1142,7 +1139,7 @@ def interactive_loop() -> None:
             choice = show_main_menu()
 
             if choice == "exit" or choice is None:
-                console.print("\n[white]Goodbye.[/]")
+                console.print("\n[rgb(255,200,80)]Goodbye.[/]")
                 return
             if choice == "quick_train":
                 quick_train(console)
@@ -1185,7 +1182,7 @@ def interactive_loop() -> None:
                 console.input("\n[dim]Press Enter to return to menu...[/]")
 
         except KeyboardInterrupt:
-            console.print("\n\n[white]Goodbye.[/]")
+            console.print("\n\n[rgb(255,200,80)]Goodbye.[/]")
             return
         except EOFError:
             return
@@ -1637,7 +1634,7 @@ def list(
         if not models:
             console.print("[dim]No cached models found.[/]")
             return
-        table = Table(show_header=True, header_style="bold white", border_style="white")
+        table = Table(show_header=True, header_style="bold rgb(255,200,80)", border_style="rgb(255,200,80)")
         table.add_column("#", style="dim", width=4)
         table.add_column("Model", style="white")
         table.add_column("Size", style="dim", width=12)
@@ -1654,7 +1651,7 @@ def list(
         if not datasets:
             console.print("[dim]No datasets found.[/]")
             return
-        table = Table(show_header=True, header_style="bold white", border_style="white")
+        table = Table(show_header=True, header_style="bold rgb(255,200,80)", border_style="rgb(255,200,80)")
         table.add_column("#", style="dim", width=4)
         table.add_column("Dataset", style="white")
         table.add_column("Examples", style="dim", width=10)
@@ -1674,7 +1671,7 @@ def list(
         if not history:
             console.print("[dim]No training history.[/]")
             return
-        table = Table(show_header=True, header_style="bold white", border_style="white")
+        table = Table(show_header=True, header_style="bold rgb(255,200,80)", border_style="rgb(255,200,80)")
         table.add_column("#", style="dim", width=4)
         table.add_column("Run", style="white")
         table.add_column("Model", style="dim")
@@ -1705,7 +1702,7 @@ def list(
         if not adapters:
             console.print("[dim]No adapters found.[/]")
             return
-        table = Table(show_header=True, header_style="bold white", border_style="white")
+        table = Table(show_header=True, header_style="bold rgb(255,200,80)", border_style="rgb(255,200,80)")
         table.add_column("#", style="dim", width=4)
         table.add_column("Adapter", style="white")
         table.add_column("Full Path", style="dim")
@@ -1836,9 +1833,9 @@ def info(
         f"[bold]Active Template:[/] {state.active_template}\n"
         f"[bold]Active Dataset:[/] {state.active_dataset or '(none)'}\n"
     )
-    console.print(Panel(panel_content, title="[bold]phronis Info[/bold]", border_style="white"))
+    console.print(Panel(panel_content, title="[bold]phronis Info[/bold]", border_style="rgb(255,200,80)"))
 
-    table = Table(show_header=True, header_style="bold white", border_style="white")
+    table = Table(show_header=True, header_style="bold rgb(255,200,80)", border_style="rgb(255,200,80)")
     table.add_column("Directory", style="white")
     table.add_column("Files", style="dim", width=8)
     table.add_column("Size", style="dim", width=12)
@@ -1861,7 +1858,7 @@ def doctor(
     ok = run_bootstrap(console, force=fix)
 
     # Extra checks
-    extra_table = Table(show_header=True, header_style="bold white", border_style="white")
+    extra_table = Table(show_header=True, header_style="bold rgb(255,200,80)", border_style="rgb(255,200,80)")
     extra_table.add_column("Extra Check", style="white")
     extra_table.add_column("Status", width=12)
     extra_table.add_column("Details", style="dim")
