@@ -20,11 +20,11 @@ def get_logo_text() -> str:
 
 def _gather_system_info() -> list[tuple[str, str]]:
     """Gather system info for the CRT boot display."""
-    gold = "rgb(255,200,80)"
-    dim = "rgb(180,140,40)"
+    purple = "rgb(168,85,247)"
+    dim = "rgb(120,60,200)"
 
     lines = [
-        ("Initializing phronis...", gold),
+        ("Initializing phronis...", purple),
     ]
 
     # Python version
@@ -65,7 +65,7 @@ def _gather_system_info() -> list[tuple[str, str]]:
         pass
 
     lines.append(("", ""))
-    lines.append(("Quick Train  Advanced Train  Chat  Export", gold))
+    lines.append(("Quick Train  Advanced Train  Chat  Export", purple))
 
     return lines
 

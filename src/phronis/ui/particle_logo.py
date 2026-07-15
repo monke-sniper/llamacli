@@ -15,7 +15,7 @@ from rich.align import Align
 from rich.live import Live
 
 from phronis.ui.braille import BrailleCanvas, text_to_pixels
-from phronis.ui.timing import settle_curve, warm_gold_from_white
+from phronis.ui.timing import settle_curve, purple_from_white
 
 
 class Particle:
@@ -149,7 +149,7 @@ def run_particle_logo(console: Console, hold_seconds: float = 2.0) -> None:
                     trail_y = int(p.y - p.vy * trail_scale)
                     canvas.set_pixel(trail_x, trail_y)
 
-                r, g, b = warm_gold_from_white(progress)
+                r, g, b = purple_from_white(progress)
             else:
                 settle_t = (frame - converge_frames) / hold_frames
                 for p in particles:
@@ -159,7 +159,7 @@ def run_particle_logo(console: Console, hold_seconds: float = 2.0) -> None:
                     canvas.set_pixel(int(jx), int(jy))
                     canvas.set_pixel(int(p.target_x), int(p.target_y))
 
-                r, g, b = 255, 200, 80
+                r, g, b = 168, 85, 247
 
             lines = canvas.render()
             result = Text()
@@ -183,6 +183,6 @@ def run_particle_logo(console: Console, hold_seconds: float = 2.0) -> None:
             if ch == chr(0x2800):
                 final.append(ch)
             else:
-                final.append(ch, style="rgb(255,200,80)")
+                final.append(ch, style="rgb(168,85,247)")
         final.append("\n")
     console.print(Align.center(final))

@@ -15,6 +15,7 @@ from . import (
     BUNDLED_DATASET_INFO,
 )
 from .state import get_state
+from .ui.theme import PHRONIS_QUESTIONARY_STYLE
 
 
 def _list_cached_models():
@@ -686,7 +687,8 @@ def prompt_model(console: Console, allow_back: bool = False):
                 "Select a model:",
                 choices=choices,
                 default=choices[1] if allow_back and len(choices) > 1 else (choices[0] if choices else None),
-                pointer=">",
+                pointer="\u25b8",
+                style=PHRONIS_QUESTIONARY_STYLE,
                 use_arrow_keys=True,
                 use_jk_keys=True,
                 instruction="(j/k to move, Enter to select)",
@@ -720,7 +722,8 @@ def prompt_model(console: Console, allow_back: bool = False):
                 f"Select template (auto-detected: {detected}):",
                 choices=template_choices,
                 default="__auto__",
-                pointer=">",
+                pointer="\u25b8",
+                style=PHRONIS_QUESTIONARY_STYLE,
                 use_arrow_keys=True,
                 use_jk_keys=True,
                 instruction="(template affects chat format)",
@@ -764,7 +767,8 @@ def prompt_dataset(console: Console, allow_back: bool = False):
                 selected = questionary.checkbox(
                     "Select dataset(s) (Space to toggle):",
                     choices=choices,
-                    pointer=">",
+                    pointer="\u25b8",
+                    style=PHRONIS_QUESTIONARY_STYLE,
                     use_arrow_keys=True,
                     use_jk_keys=True,
                     instruction="(Space to select, Enter to confirm)",
@@ -817,7 +821,8 @@ def prompt_dataset(console: Console, allow_back: bool = False):
         selected = questionary.checkbox(
             "Select dataset(s) (Space to toggle):",
             choices=choices,
-            pointer=">",
+            pointer="\u25b8",
+            style=PHRONIS_QUESTIONARY_STYLE,
             use_arrow_keys=True,
             use_jk_keys=True,
             instruction="(Space to select, Enter to confirm)",
@@ -848,7 +853,8 @@ def prompt_stage(console: Console, allow_back: bool = False):
         selected = questionary.select(
             "Training stage:",
             choices=choices,
-            pointer=">",
+            pointer="\u25b8",
+            style=PHRONIS_QUESTIONARY_STYLE,
             use_arrow_keys=True,
             use_jk_keys=True,
             instruction="(j/k to move, Enter to select)",
@@ -866,7 +872,8 @@ def prompt_finetuning_type(console: Console, allow_back: bool = False):
         selected = questionary.select(
             "Fine-tuning method:",
             choices=choices,
-            pointer=">",
+            pointer="\u25b8",
+            style=PHRONIS_QUESTIONARY_STYLE,
             use_arrow_keys=True,
             use_jk_keys=True,
             instruction="(j/k to move, Enter to select)",
@@ -892,7 +899,8 @@ def prompt_training_params(console: Console, finetuning_type, allow_back: bool =
                 "LoRA rank:",
                 choices=lora_choices,
                 default=lora_choices[1] if allow_back and len(lora_choices) > 1 else lora_choices[0],
-                pointer=">",
+                pointer="\u25b8",
+                style=PHRONIS_QUESTIONARY_STYLE,
                 use_arrow_keys=True,
             ).ask()
         except (KeyboardInterrupt, EOFError):
@@ -1050,7 +1058,8 @@ def prompt_chat_model(console: Console, allow_back: bool = False):
             "Select model to chat with:",
             choices=choices,
             default=choices[1] if allow_back and len(choices) > 1 else choices[0] if choices else None,
-            pointer=">",
+            pointer="\u25b8",
+            style=PHRONIS_QUESTIONARY_STYLE,
             use_arrow_keys=True,
             use_jk_keys=True,
             instruction="(j/k to move, Enter to select)",

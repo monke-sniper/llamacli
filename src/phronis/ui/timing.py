@@ -13,3 +13,9 @@ def warm_gold_from_white(progress: float) -> tuple[int, int, int]:
     """Interpolate from white to warm gold for progress 0..1."""
     t = max(0.0, min(1.0, progress))
     return 255, int(255 - 55 * t), int(255 - 175 * t)
+
+
+def purple_from_white(progress: float) -> tuple[int, int, int]:
+    """Interpolate from white to bright purple for progress 0..1."""
+    t = max(0.0, min(1.0, progress))
+    return int(255 - 87 * t), int(255 - 170 * t), int(255 - 8 * t)

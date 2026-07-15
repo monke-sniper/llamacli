@@ -70,15 +70,15 @@ def run_boot_sequence(console: Console, boot_lines: list[tuple[str, str]]) -> No
                     noise_tail = "".join(rng.choice("░▒▓") for _ in range(noise_len))
 
                 result.append(typed, style=line_style)
-                result.append(cursor, style="bold rgb(255,200,80)")
-                result.append(noise_tail, style="dim rgb(180,140,40)")
+                result.append(cursor, style="bold rgb(168,85,247)")
+                result.append(noise_tail, style="dim rgb(120,60,200)")
                 result.append("\n")
 
                 remaining = term_height - len(displayed_lines) - 2
                 for _ in range(max(0, remaining)):
                     if rng.random() < scanline_chance:
                         scan_len = rng.randint(5, 30)
-                        result.append("─" * scan_len, style="dim rgb(180,140,40)")
+                        result.append("─" * scan_len, style="dim rgb(120,60,200)")
                     result.append("\n")
 
                 live.update(result)
@@ -97,7 +97,7 @@ def run_boot_sequence(console: Console, boot_lines: list[tuple[str, str]]) -> No
                 result.append(prev_text, style=prev_style)
                 result.append("\n")
             if frame % 8 < 4:
-                result.append("█", style="rgb(255,200,80)")
+                result.append("█", style="rgb(168,85,247)")
             live.update(result)
             time.sleep(0.05)
 
