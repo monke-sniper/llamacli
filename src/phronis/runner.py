@@ -217,7 +217,7 @@ def run_training(console: Console, config_path: str, output_name: str, target_lo
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"},
             )
             proc_ref[0] = proc
             for line in proc.stdout:
