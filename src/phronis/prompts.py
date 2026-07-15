@@ -712,13 +712,14 @@ def prompt_model(console: Console, allow_back: bool = False):
         template_choices = []
         if allow_back:
             template_choices.append(questionary.Choice(title="← Back", value="__back__"))
+        template_choices.append(questionary.Choice(title="auto (detect)", value="__auto__"))
         for t in TEMPLATES:
             template_choices.append(questionary.Choice(title=t, value=t))
         try:
             template = questionary.select(
                 f"Select template (auto-detected: {detected}):",
                 choices=template_choices,
-                default=detected if detected in TEMPLATES else "qwen3",
+                default="__auto__",
                 pointer=">",
                 use_arrow_keys=True,
                 use_jk_keys=True,
@@ -729,6 +730,8 @@ def prompt_model(console: Console, allow_back: bool = False):
 
         if template == "__back__":
             continue
+        if template == "__auto__":
+            template = detected
         if not template:
             if allow_back:
                 continue
