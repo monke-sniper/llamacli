@@ -220,6 +220,8 @@ def run_training(console: Console, config_path: str, output_name: str, target_lo
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
                 env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
             )
@@ -351,6 +353,8 @@ def run_export(console: Console, config_path: str) -> bool:
             result = subprocess.run(
                 _get_cli() + ["export", config_path],
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
             )
         output = (result.stdout or "") + (result.stderr or "")
