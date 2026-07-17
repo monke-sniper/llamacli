@@ -13,7 +13,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/monke-sniper/phronis"><img src="https://img.shields.io/github/v/tag/monke-sniper/phronis?color=%2334D058&label=version" alt="Version"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python"></a>
   <a href="https://github.com/monke-sniper/phronis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"></a>
   <a href="https://github.com/monke-sniper/phronis/actions"><img src="https://img.shields.io/badge/tests-192%2F192-brightgreen" alt="Tests"></a>
