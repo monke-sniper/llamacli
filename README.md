@@ -44,7 +44,7 @@ An interactive terminal app for fine-tuning large language models. Pick a model,
 pip install phronis
 ```
 
-Requires Python 3.11+ and a GPU (CUDA or MPS). No additional setup needed - phronis auto-detects and installs missing dependencies on first run.
+Requires Python 3.11+ and a GPU - preferably an nvidia gpu (CUDA or MPS). No additional setup needed - phronis auto-detects and installs missing dependencies on first run.
 
 ## Quick Start
 
